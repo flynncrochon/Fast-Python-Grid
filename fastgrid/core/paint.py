@@ -173,11 +173,11 @@ def paint(model, geom, active, ranges, hover_corner=False, row_range=None):
     # chrome
     if g.frozen > 0:
         dl.overlays.append(("line", fx, 0, fx, h, T.DIVIDER, 1))
-    # corner triangle: selection orange whenever a real selection exists (Ctrl+A
-    # or any multi-cell/banked range), hover orange on hover, else inert grey --
-    # unlit once the selection collapses to a single cell or nothing.
-    selected = bool(norm) and not single_cell
-    tri_color = T.SEL_RING if selected else T.ACCENT if hover_corner else T.GRID
+    # corner triangle: selection orange ONLY when the whole sheet is selected
+    # (Ctrl+A / a drag spanning header+data extent), hover orange on hover, else grey.
+    lr, lc = model.data_extent()
+    all_selected = any(r1 == 0 and c1 == 0 and r2 >= lr and c2 >= lc for (r1, c1, r2, c2) in norm)
+    tri_color = T.SEL_RING if all_selected else T.ACCENT if hover_corner else T.GRID
     dl.overlays.append(("tri", g.gutter_w - 3, lh - 3, max(5, min(g.gutter_w, lh) // 2),
                         tri_color))
     # Selection outline = perimeter of the selected union: emit an edge only where

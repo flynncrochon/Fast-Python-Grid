@@ -34,6 +34,7 @@ class QtCanvas:
         self.p, self.font, self.hfont, self._qcolor = p, font, hfont, qcolor
         self.fm = {False: QtGui.QFontMetrics(font), True: QtGui.QFontMetrics(hfont)}
         self._pens = {}
+        self._glyph_fonts = {}   # px -> QFont, so glyph() doesn't build one per frame
         self.cur_font = None
         self.A_L = int(QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft)
         self.A_C = int(QtCore.Qt.AlignVCenter | QtCore.Qt.AlignHCenter)
@@ -91,8 +92,11 @@ class QtCanvas:
         self.p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(px, py) for px, py in points]))
 
     def glyph(self, cx, cy, s, color, px):
-        f = QtGui.QFont(self.font)
-        f.setPixelSize(int(px))
+        ipx = int(px)
+        f = self._glyph_fonts.get(ipx)
+        if f is None:
+            f = QtGui.QFont(self.font); f.setPixelSize(ipx)
+            self._glyph_fonts[ipx] = f
         self.p.setFont(f); self.cur_font = None
         self.p.setPen(self._c(color))
         self.p.drawText(QtCore.QRectF(cx - px, cy - px, px * 2, px * 2),

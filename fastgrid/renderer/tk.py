@@ -82,6 +82,12 @@ class TkCanvas:
 
     def __init__(self, canvas, font, hfont, scale):
         self.c, self.font, self.hfont, self.s = canvas, font, hfont, scale
+        # Hot cell primitives (rect/text) call Tcl directly, bypassing tkinter's
+        # per-item _options/_cnfmerge option-dict merge -- that Python overhead, not
+        # the Tcl round-trip, dominates create_* (~70% of each call). Same item ids.
+        self._call, self._getint, self._wname = canvas.tk.call, canvas.tk.getint, canvas._w
+        self._family = font.actual("family")   # one Tcl round-trip, not one per glyph/frame
+        self._glyph_fonts = {}                  # px -> (family, size) tuple, reused per frame
         self._dy = 0
         self._tag = None
         self._pin_h = None
@@ -95,8 +101,9 @@ class TkCanvas:
 
     def rect(self, x, y, w, h, fill=None, outline=None, width=1):
         y += self._dy
-        it = self.c.create_rectangle(x, y, x + w, y + h, fill=fill or "",
-                                     outline=outline or "", width=max(1, round(width * self.s)))
+        it = self._getint(self._call(self._wname, "create", "rectangle", x, y, x + w, y + h,
+                                     "-fill", fill or "", "-outline", outline or "",
+                                     "-width", max(1, round(width * self.s))))
         if self._collect is not None:
             self._collect.append(it)
         self._post(it, y, y + h)
@@ -105,11 +112,11 @@ class TkCanvas:
         f = self.hfont if bold else self.font
         y += self._dy
         if center:
-            it = self.c.create_text(x + w / 2, y + h / 2, anchor="center", fill=color,
-                                    font=f, text=_fit(f, s, w - 6))
+            cx, cy, anchor, txt = x + w / 2, y + h / 2, "center", _fit(f, s, w - 6)
         else:
-            it = self.c.create_text(x + 5, y + h / 2, anchor="w", fill=color,
-                                    font=f, text=_fit(f, s, w - 9))
+            cx, cy, anchor, txt = x + 5, y + h / 2, "w", _fit(f, s, w - 9)
+        it = self._getint(self._call(self._wname, "create", "text", cx, cy, "-anchor", anchor,
+                                     "-fill", color, "-font", f.name, "-text", txt))
         self._post(it, y, y + h)
 
     def line(self, x1, y1, x2, y2, color, width):
@@ -125,8 +132,11 @@ class TkCanvas:
 
     def glyph(self, cx, cy, s, color, px):
         cy += self._dy
-        it = self.c.create_text(cx, cy, anchor="center", text=s, fill=color,
-                                font=(self.font.actual("family"), -max(7, round(px))))
+        key = -max(7, round(px))
+        f = self._glyph_fonts.get(key)
+        if f is None:
+            f = self._glyph_fonts[key] = (self._family, key)
+        it = self.c.create_text(cx, cy, anchor="center", text=s, fill=color, font=f)
         self._post(it, cy, cy)
 
 

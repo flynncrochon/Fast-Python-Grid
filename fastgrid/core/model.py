@@ -69,14 +69,17 @@ class GridModel:
         return [r for _t, r in filled] + blanks
 
     def _rebuild(self):
-        rows = list(range(len(self._rows)))
+        if self._is_plain():
+            self._view = []      # unread while plain (_src_data/_data_count skip it); don't build 1M ids
+            return
+        rows = range(len(self._rows))      # narrowed by the first filter; not materialised up front
         for col, allowed in self._filters.items():
             rows = [r for r in rows if self._rows[r][col] in allowed]
         for col, spec in self._text_filters.items():
             rows = [r for r in rows if self._match_text(self._rows[r][col], spec)]
         if self._sort is not None:
             rows = self._sort_rows(rows, self._sort[0], self._sort[1])
-        self._view = rows
+        self._view = rows if type(rows) is list else list(rows)
 
     # --- shape / access (GRID rows: 0 = header, 1..N = data) ----------
     @property
@@ -172,9 +175,10 @@ class GridModel:
         if vals is not None:
             return vals[:cap], len(vals) > cap
         seen = set()
+        add = seen.add                              # bind once; called per row on a full scan
         for row in self._rows:
-            seen.add(row[col])
-            if len(seen) > cap:
+            add(row[col])
+            if len(seen) > cap:                     # high-card bails out here after ~cap rows
                 return sorted(seen)[:cap], True     # partial -> don't cache
         vals = self._distinct[col] = sorted(seen)   # complete -> cache
         return vals, False
