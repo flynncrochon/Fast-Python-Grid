@@ -7,7 +7,7 @@
 """
 import sys
 
-from _data import HEADERS, COL_W, gen_rows, rows_arg
+from _data import HEADERS, COL_W, gen_rows, rows_arg, style_demo
 
 
 def smoke():
@@ -27,10 +27,17 @@ def smoke():
     m.set_cell(1, 1, "EDITED"); assert m.cell(1, 1) == "EDITED"    # edit a data cell
     m.undo(); assert m.cell(1, 1) == "Company 0 Inc."
     assert m.cell(0, 1) == "Company"       # header row is selectable/addressable
+    style_demo(m)                          # data-driven per-cell fg/bold/bg
+    chg = HEADERS.index("Chg%")
+    styled = next(c for c in (m.cell_style(gr, chg) for gr in range(1, 50)) if c)
+    assert styled.get("bold") and styled.get("fg") in ("#c0392b", "#1e8449"), styled
     g = Geometry(COL_W, frozen=2); g.w, g.h = 1000, 560
     m.set_find("Energy", False, None, (7, 2))
     dl = paint(m, g, active=(2, 1), ranges=[(0, 1, 6, 3)])   # selection spans the header row
     assert dl.cells and dl.overlays and any(fl & 1 for *_r, fl in dl.cells)
+    # a Chg% body cell carries its styled fg (not the default body colour)
+    from fastgrid.core import theme as T
+    assert any(fg != T.TXT for *_r, fg, _fl in dl.cells), "styled fg reached the display list"
     print("smoke OK — model + core paint (%d cells, %d overlays)"
           % (len(dl.cells), len(dl.overlays)))
 
@@ -43,6 +50,7 @@ def _tab(nb, rows, editable, scale):
     from fastgrid.renderer.tk import TkGrid, _UI_BG
     frame = tk.Frame(nb)
     model = GridModel(HEADERS, gen_rows(rows), editable=editable)
+    style_demo(model)                          # per-cell fg/bold/bg showcase
     bar = tk.Frame(frame, bg=_UI_BG); bar.pack(fill="x")
     grid = TkGrid(frame, model, editable=editable, frozen=2, col_w=COL_W, scale=scale)
     grid.pack(fill="both", expand=True)

@@ -1,15 +1,19 @@
 """Tk renderer: blit the core display list with native Canvas items and wire
-tkinter events. NO Pillow -- only the ~visible cells become Canvas items
-(virtualized), so 100k rows stay smooth. All layout/colour lives in core; this
-file is "draw these tuples + turn clicks into core calls".
+tkinter events into the shared GridController. NO Pillow -- only the ~visible
+cells become Canvas items (virtualized), so 100k rows stay smooth. All
+layout/colour/behaviour lives in core; this file is "draw these tuples, build
+the widgets, translate tk events".
 """
 import tkinter as tk
 from tkinter import font as tkfont, simpledialog
 
-from ..core import selection as S, theme as T
+from ..core import theme as T
+from ..core.filter import FilterController
 from ..core.find import FindController
 from ..core.geometry import Geometry
+from ..core.gridcontroller import GridController
 from ..core.paint import paint, edit_colors
+from ..core.render import blit
 
 # Chrome for the floating Tk widgets (filter popup, find bar, toolbar) — kept
 # light/readable and decoupled from the dark cell palette in core.theme.
@@ -64,6 +68,68 @@ def _screen_scale(win):
             return 1.0
 
 
+class TkCanvas:
+    """Tk backend for core.render.blit -- one Canvas item per primitive. Stroke
+    widths scale with DPI so grid lines/rings stay crisp (identical at 100%).
+
+    Native-scroll hooks (TkGrid drives them; default off = plain full-frame blit):
+      _dy    -- pixels added to every y, so overlays land over the yview-scrolled
+                body (world_y = screen_y + canvasy(0)).
+      _tag   -- extra tag on every item (e.g. "ov" so a scroll can delete+redraw
+                just the overlays without touching the blitted body band).
+      _pin_h -- tag items lying wholly inside [0, _pin_h) (the header band) as
+                "pinned" so the body can scroll under them while they stay put."""
+
+    def __init__(self, canvas, font, hfont, scale):
+        self.c, self.font, self.hfont, self.s = canvas, font, hfont, scale
+        self._dy = 0
+        self._tag = None
+        self._pin_h = None
+        self._collect = None        # if a list, every rect id is appended (cell->item map)
+
+    def _post(self, item, ytop, ybot):
+        if self._tag:
+            self.c.addtag_withtag(self._tag, item)
+        if self._pin_h is not None and ytop >= 0 and ybot <= self._pin_h + 1:
+            self.c.addtag_withtag("pinned", item)
+
+    def rect(self, x, y, w, h, fill=None, outline=None, width=1):
+        y += self._dy
+        it = self.c.create_rectangle(x, y, x + w, y + h, fill=fill or "",
+                                     outline=outline or "", width=max(1, round(width * self.s)))
+        if self._collect is not None:
+            self._collect.append(it)
+        self._post(it, y, y + h)
+
+    def text(self, x, y, w, h, s, color, bold=False, center=False):
+        f = self.hfont if bold else self.font
+        y += self._dy
+        if center:
+            it = self.c.create_text(x + w / 2, y + h / 2, anchor="center", fill=color,
+                                    font=f, text=_fit(f, s, w - 6))
+        else:
+            it = self.c.create_text(x + 5, y + h / 2, anchor="w", fill=color,
+                                    font=f, text=_fit(f, s, w - 9))
+        self._post(it, y, y + h)
+
+    def line(self, x1, y1, x2, y2, color, width):
+        y1 += self._dy; y2 += self._dy
+        it = self.c.create_line(x1, y1, x2, y2, fill=color, width=max(1, round(width * self.s)))
+        self._post(it, min(y1, y2), max(y1, y2))
+
+    def poly(self, points, color):
+        pts = [(px, py + self._dy) for px, py in points]
+        it = self.c.create_polygon(*[v for p in pts for v in p], fill=color, outline=color)
+        ys = [py for _px, py in pts]
+        self._post(it, min(ys), max(ys))
+
+    def glyph(self, cx, cy, s, color, px):
+        cy += self._dy
+        it = self.c.create_text(cx, cy, anchor="center", text=s, fill=color,
+                                font=(self.font.actual("family"), -max(7, round(px))))
+        self._post(it, cy, cy)
+
+
 class TkGrid(tk.Frame):
     def __init__(self, master, model, editable=True, frozen=0, col_w=None, scale=1.0, **kw):
         super().__init__(master, **kw)
@@ -79,26 +145,37 @@ class TkGrid(tk.Frame):
         widths = [max(24, round(w * s)) for w in (col_w or [120] * model.ncols)]
         self.geom = Geometry(widths, frozen, gutter_w=max(28, round(56 * s)),
                              row_h=max(14, round(22 * s)))
-        # Zoom state: metrics are recomputed from these DPI-scaled base values
-        # times _zoom (never ratio-chained), so it never drifts or fights the
-        # min-size floors. Manual column resizes write back to _base_w (see
-        # _resize_to) so a later zoom keeps them proportional.
-        self._zoom = 1.0
-        self._base_fpx, self._base_row_h, self._base_gutter = 13 * s, 22 * s, 56 * s
-        self._base_w = list(widths)
-
-        self.active = (1, 0)               # start on the first DATA cell (row 0 = header)
-        self.anchor = (1, 0)
-        self.sel = (1, 0, 1, 0)
-        self.extra = []
-        self._drag_region = None
+        self._base_fpx = 13 * s            # zoom scales pixel fonts off this
+        self.ctl = GridController(self, base_row_h=22 * s, base_gutter=56 * s, base_w=widths)
         self._editor = None
-        self._corner_hover = False
-        self._resize_col = None            # column being drag-resized, else None
+        # Native-scroll cache: a materialised band of rows [B0, B1) is blitted once
+        # in WORLD-Y coords; vertical scroll then moves through it with the canvas'
+        # own yview (a C-level pixel blit -- the whole point) instead of repainting
+        # every text item. _OVER rows of overscan each side; rebuild when scrolling
+        # within _MARGIN of a band edge. Horizontal scroll / edits / selection go
+        # through the full repaint (redraw), which just rebuilds the band.
+        self._OVER, self._MARGIN = 24, 3
+        self._band = None            # (B0, B1) currently materialised, or None
+        self._pin_at = 0.0           # world-y the "pinned" header items were last moved to
+        self._bandpix = 0            # scrollregion height of the current band
+        # Incremental selection: dragging a selection changes only which cells are
+        # washed, so we keep the cell rects and just re-fill the few that flipped
+        # instead of repainting the whole viewport. Valid only while the viewport
+        # (rows/cols/size) is unchanged since the last full paint.
+        self._cell_rects = None      # rect item ids aligned with the last paint's cells
+        self._cell_bgs = None        # their current fill colours
+        self._paint_key = None       # viewport signature the map was built for
+        # Scroll coalescing: the scrollbar/wheel fire a repaint per motion event
+        # (~100/s), each far slower than the event rate, so painting every one
+        # queues a backlog that lags the thumb. Instead we stash the latest paint
+        # and run it once on after_idle -- always the newest position, never a queue.
+        self._paint_pending = False
+        self._next_paint = None
 
         self.canvas = tk.Canvas(self, highlightthickness=0, bg=T.BG)
         self.vbar = tk.Scrollbar(self, orient="vertical", command=self._on_vscroll)
         self.hbar = tk.Scrollbar(self, orient="horizontal", command=self._on_hscroll)
+        self._cv = TkCanvas(self.canvas, self.font, self.hfont, self._scale)
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.vbar.grid(row=0, column=1, sticky="ns")
         self.hbar.grid(row=1, column=0, sticky="ew")
@@ -111,14 +188,15 @@ class TkGrid(tk.Frame):
         c = self.canvas
         c.bind("<Configure>", lambda e: self.redraw())
         c.bind("<Button-1>", self._on_press)
-        c.bind("<B1-Motion>", self._on_drag)
-        c.bind("<ButtonRelease-1>", self._on_release)
-        c.bind("<Double-Button-1>", self._on_double)
-        c.bind("<MouseWheel>", lambda e: (self._scroll_rows(-(e.delta // 120) * 3)))
+        c.bind("<B1-Motion>", lambda e: self.ctl.on_drag(e.x, e.y))
+        c.bind("<ButtonRelease-1>", lambda e: self.ctl.on_release())
+        c.bind("<Double-Button-1>", lambda e: self.ctl.on_double(e.x, e.y))
+        c.bind("<Button-3>", self._on_context)
+        c.bind("<MouseWheel>", lambda e: self._scroll_rows(-(e.delta // 120) * 3))
         c.bind("<Shift-MouseWheel>", lambda e: self._scroll_px(-(e.delta // 120) * 40))
-        c.bind("<Control-MouseWheel>", lambda e: self._zoom_by(1.1 if e.delta > 0 else 1 / 1.1))
-        c.bind("<Motion>", self._on_motion)
-        c.bind("<Leave>", lambda e: self._set_corner_hover(False))
+        c.bind("<Control-MouseWheel>", lambda e: self.ctl.zoom_by(1.1 if e.delta > 0 else 1 / 1.1))
+        c.bind("<Motion>", lambda e: self.ctl.on_motion(e.x, e.y))
+        c.bind("<Leave>", lambda e: self.ctl.set_corner_hover(False))
         c.bind("<Key>", self._on_key)
         try:                                                   # X11 horizontal wheel
             c.bind("<Button-6>", lambda e: self._scroll_px(-40))
@@ -127,64 +205,207 @@ class TkGrid(tk.Frame):
             pass
         c.configure(takefocus=1)
         c.focus_set()
-        # Tk 8.6 drops WM_MOUSEHWHEEL (trackpad horizontal) on Windows -- hook it in.
-        self._hacc = 0
-        self.after(0, self._install_hwheel)
+        # No trackpad horizontal-swipe scroll -- Tk 8.6 drops WM_MOUSEHWHEEL and the
+        # only way to catch it is a fragile Win32 hook. Shift+wheel, the scrollbar,
+        # and X11 Button-6/7 cover horizontal scroll instead.
 
     # --- render -------------------------------------------------------
     def redraw(self):
+        """Full repaint of the visible viewport in plain screen coords -- the path
+        for everything that ISN'T a vertical wheel/scrollbar scroll (selection,
+        drag, edit, filter, zoom, horizontal scroll). Light (no band / overscan /
+        yview): paints just what's on screen so dragging a selection stays fast. It
+        resets to yview=0 and invalidates the band, so the next vertical scroll rebuilds."""
         if not self.winfo_exists():
             return
         g = self.geom
         g.w, g.h = self.canvas.winfo_width(), self.canvas.winfo_height()
         if g.w < 2 or g.h < 2:
             return
-        dl = paint(self.model, g, self.active, self._ranges(), self._corner_hover)
-        c = self.canvas
-        c.delete("all")
-        for (x, y, w, h, text, bg, fg, flags) in dl.cells:
-            c.create_rectangle(x, y, x + w, y + h, fill=bg, outline=T.GRID)
-            if text:
-                f = self.hfont if flags & T.FLAG_BOLD else self.font
-                if flags & T.FLAG_CENTER:
-                    c.create_text(x + w / 2, y + h / 2, anchor="center", fill=fg,
-                                  font=f, text=self._clip(text, w - 6, f))
-                else:
-                    c.create_text(x + 5, y + h / 2, anchor="w", fill=fg, font=f,
-                                  text=self._clip(text, w - 9, f))
-        for ov in dl.overlays:
-            k = ov[0]
-            if k == "line":
-                c.create_line(ov[1], ov[2], ov[3], ov[4], fill=ov[5],
-                              width=max(1, round(ov[6] * self._scale)))
-            elif k == "rect":
-                c.create_rectangle(ov[1], ov[2], ov[1] + ov[3], ov[2] + ov[4],
-                                   outline=ov[5], width=max(1, round(ov[6] * self._scale)))
-            elif k == "filterbtn":
-                self._draw_filter_btn(c, *ov[1:])
-            elif k == "tri":
-                x1, y1, sz, col = ov[1], ov[2], ov[3], ov[4]
-                c.create_polygon(x1 - sz, y1, x1, y1 - sz, x1, y1, fill=col, outline=col)
+        g.clamp(self.model.nrows())
+        # Mid-drag with an unchanged viewport: recolour only the flipped cells.
+        if self.ctl.drag_region is not None and self._paint_key == self._vp_key():
+            self._update_selection()
+            return
+        self.canvas.delete("all")
+        self.canvas.yview_moveto(0)                     # unscrolled: screen == world
+        self.canvas.configure(scrollregion=(0, 0, g.w, g.h))
+        dl = paint(self.model, g, self.ctl.active, self.ctl.ranges(), self.ctl.corner_hover)
+        rings = [ov for ov in dl.overlays if ov[0] == "ring"]     # selection outline edges
+        chrome = [ov for ov in dl.overlays if ov[0] != "ring"]    # divider, filter btns, corner
+        dl.overlays = []
+        self._cv._collect = rects = []
+        blit(dl, self._cv)                              # cells only; capture their rect ids
+        self._cv._collect = None
+        self._cell_rects = rects[1:1 + len(dl.cells)]   # rects[0] is the grid backing
+        self._cell_bgs = [c[5] for c in dl.cells]
+        self._paint_key = self._vp_key()
+        dl.cells = []
+        dl.overlays = chrome
+        blit(dl, self._cv)                              # static chrome
+        dl.overlays = rings
+        self._cv._tag = "dragov"                        # rings tagged so a drag can refresh them
+        blit(dl, self._cv)
+        self._cv._tag = None
+        self._band = None                               # invalidate the native-scroll band
         self._sync_bars()
         self._place_editor()
 
-    def _clip(self, txt, px, f):
-        return _fit(f, txt, px)
+    def _vp_key(self):
+        """Signature of everything that fixes cell positions/contents-layout; when
+        it is unchanged, the cell->item map from the last paint is still valid."""
+        g = self.geom
+        return (g.top_row, g.scroll_x, g.row_h, g.gutter_w, g.w, g.h, tuple(g.col_w))
 
-    def _draw_filter_btn(self, c, bx, by, sz, state):
-        c.create_rectangle(bx, by, bx + sz, by + sz, fill=T.BTN_BG, outline=T.BTN_BORDER)
-        if state == "funnel":                          # active filter -> amber funnel
-            mx, t, n, b, fw, sw = bx + sz / 2, by + sz * 0.24, by + sz * 0.49, by + sz * 0.72, sz * 0.22, sz * 0.05
-            c.create_polygon(mx - fw, t, mx + fw, t, mx + sw, n, mx + sw, b,
-                             mx - sw, b, mx - sw, n, fill=T.FUNNEL, outline=T.FUNNEL)
-        else:                                          # sort arrow (▲ asc / ▼ desc / idle)
-            glyph = "▲" if state == "asc" else "▼"
-            col = T.ARROW_IDLE if state == "idle" else T.ARROW_SORT
-            c.create_text(bx + sz / 2, by + sz / 2, anchor="center", text=glyph, fill=col,
-                          font=(self.font.actual("family"), -max(7, round(sz * 0.62))))
+    def _update_selection(self):
+        """Fast drag repaint: re-fill only the cells whose wash flipped and redraw
+        the rings -- a tiny dirty area vs deleting+recreating the whole viewport."""
+        dl = paint(self.model, self.geom, self.ctl.active, self.ctl.ranges(),
+                   self.ctl.corner_hover)
+        if len(dl.cells) != len(self._cell_rects):      # viewport drifted -> full repaint
+            self._paint_key = None
+            self.redraw()
+            return
+        cfg, rects, bgs = self.canvas.itemconfigure, self._cell_rects, self._cell_bgs
+        for i, cl in enumerate(dl.cells):
+            if cl[5] != bgs[i]:
+                cfg(rects[i], fill=cl[5])
+                bgs[i] = cl[5]
+        self.canvas.delete("dragov")
+        dl.cells = []
+        dl.overlays = [ov for ov in dl.overlays if ov[0] == "ring"]
+        self._cv._tag = "dragov"
+        blit(dl, self._cv)
+        self._cv._tag = None
 
-    def _ranges(self):
-        return list(self.extra) + [self.sel]
+    def _rebuild_band(self):
+        """Blit viewport+overscan rows as one band in WORLD-Y coords (row B0 at
+        header_h) so a native vertical scroll can yview-blit through it. Cells +
+        static chrome (header, filter buttons, corner, frozen divider) go in the
+        band; only the selection rings are redrawn per scroll (by _blit_overlays)
+        since they must clip to the viewport. Only the scroll path calls this."""
+        g, m = self.geom, self.model
+        n = m.nrows()
+        vis = g.vis_rows()
+        B0 = max(1, g.top_row - self._OVER)
+        B1 = min(n, g.top_row + vis + self._OVER)
+        self.canvas.delete("all")
+        self._paint_key = None                          # cell->item map is gone (world-Y now)
+        real_top = g.top_row
+        g.top_row = B0                                  # paint the band as if B0 were on top
+        self._cv._pin_h = g.header_h                    # tag the header band -> "pinned"
+        dl = paint(m, g, self.ctl.active, self.ctl.ranges(), self.ctl.corner_hover,
+                   row_range=(B0, B1))
+        # rings redraw per-scroll; the rest is static chrome painted once.
+        dl.overlays = [ov for ov in dl.overlays if ov[0] in ("filterbtn", "tri")]
+        blit(dl, self._cv)
+        self._cv._pin_h = None
+        g.top_row = real_top
+        if g.frozen > 0:                                # frozen divider: pinned, full-viewport
+            it = self.canvas.create_line(g.freeze_x(), 0, g.freeze_x(), g.h,
+                                         fill=T.DIVIDER, width=max(1, round(self._scale)))
+            self.canvas.addtag_withtag("pinned", it)
+        self.canvas.tag_raise("pinned")                 # chrome stays above the scrolling body
+        self._band = (B0, B1)
+        self._pin_at = 0.0                              # painted at world[0, header_h)
+        self._bandpix = g.header_h + (B1 - B0) * g.row_h
+
+    def _blit_overlays(self):
+        """Redraw just the selection/active rings at the current scroll position --
+        two items, tiny dirty area. They ride +canvasy(0) so they land over the
+        yview-scrolled body, and re-clip to the real viewport each frame."""
+        c = self._cv
+        self.canvas.delete("ov")
+        dy = self.canvas.canvasy(0)                     # world-y currently at screen top
+        dl = paint(self.model, self.geom, self.ctl.active, self.ctl.ranges(),
+                   self.ctl.corner_hover)
+        dl.cells = []
+        dl.overlays = [ov for ov in dl.overlays if ov[0] == "ring"]
+        c._dy, c._tag = dy, "ov"                        # offset rings onto the scrolled body
+        blit(dl, c)
+        c._dy, c._tag = 0, None
+
+    def _apply_scroll(self):
+        """Position the materialised band for the current top_row via native yview
+        (the fast blit), re-pin the chrome, and refresh rings/scrollbars."""
+        g = self.geom
+        B0 = self._band[0]
+        yoff = (g.top_row - B0) * g.row_h
+        self.canvas.configure(scrollregion=(0, 0, g.w, self._bandpix))
+        self.canvas.yview_moveto(yoff / max(1, self._bandpix))
+        actual = self.canvas.canvasy(0)                 # exact landed offset (px-rounded)
+        d = actual - self._pin_at
+        if d:
+            self.canvas.move("pinned", 0, d)            # keep chrome fixed as the body blits
+            self._pin_at = actual
+        self._blit_overlays()
+        self._sync_bars()
+        self._place_editor()
+
+    def _need_rebuild(self):
+        """True when the viewport is within _MARGIN rows of a band edge (and there
+        are more rows that way) -- i.e. a native scroll would run off the band."""
+        if self._band is None:
+            return True
+        B0, B1 = self._band
+        g, n = self.geom, self.model.nrows()
+        top, bot = g.top_row, g.top_row + g.vis_rows()
+        if top - B0 < self._MARGIN and B0 > 1:
+            return True
+        if B1 - bot < self._MARGIN and B1 < n:
+            return True
+        return not (B0 <= top and bot <= B1)
+
+    def _scroll_v(self):
+        """Fast vertical-scroll path: reuse the band when possible (native yview
+        blit), rebuild only when it runs out."""
+        if not self.winfo_exists():
+            return
+        g = self.geom
+        g.w, g.h = self.canvas.winfo_width(), self.canvas.winfo_height()
+        if g.w < 2 or g.h < 2:
+            return
+        g.clamp(self.model.nrows())
+        if self._need_rebuild():
+            self._rebuild_band()
+        self._apply_scroll()
+
+    def _coalesce(self, fn):
+        """Run `fn` (a repaint) once on the next idle, collapsing a burst of
+        scroll events into a single paint at the latest position."""
+        self._next_paint = fn
+        if not self._paint_pending:
+            self._paint_pending = True
+            self.after_idle(self._flush_paint)
+
+    def _flush_paint(self):
+        self._paint_pending = False
+        fn, self._next_paint = self._next_paint, None
+        if fn:
+            fn()
+
+    # --- GridController host surface ----------------------------------
+    def after_scroll_change(self):   pass    # redraw() re-syncs the scrollbars
+    def after_geometry_change(self): pass
+    def set_edge_cursor(self, on_edge):
+        self.canvas.configure(cursor="sb_h_double_arrow" if on_edge else "")
+    def reveal_find(self):
+        self.find.reveal()
+    def open_filter_popup(self, col, at):
+        FilterPopup(self, col, *at)
+    def measure(self, text, bold):
+        return (self.hfont if bold else self.font).measure(text)
+    def set_zoom_fonts(self, z):
+        fpx = max(9, round(self._base_fpx * z))
+        self.font.configure(size=-fpx)
+        self.hfont.configure(size=-fpx)
+    def clipboard_set(self, text):
+        self.clipboard_clear(); self.clipboard_append(text)
+    def clipboard_get(self):             # tk's raises TclError on an empty clipboard
+        try:
+            return tk.Frame.clipboard_get(self)
+        except tk.TclError:
+            return ""
 
     # --- scrollbars ---------------------------------------------------
     def _sync_bars(self):
@@ -197,276 +418,62 @@ class TkGrid(tk.Frame):
         self.hbar.set(g.scroll_x / max(1, total),
                       min(1, (g.scroll_x + avail) / max(1, total)))
 
-    def _zoom_by(self, factor):
-        z = max(0.4, min(4.0, self._zoom * factor))
-        if z == self._zoom:
-            return
-        self._zoom = z
-        fpx = max(9, round(self._base_fpx * z))
-        self.font.configure(size=-fpx)
-        self.hfont.configure(size=-fpx)
-        self.geom.set_metrics(max(10, round(self._base_row_h * z)),
-                              max(24, round(self._base_gutter * z)),
-                              [max(20, round(w * z)) for w in self._base_w])
-        self.geom.clamp(self.model.nrows())
-        self.redraw()
-
-    def _resize_to(self, c, w):
-        """Set column c's width (drag-resize / autofit) and record it as the new
-        base so a later zoom keeps it proportional instead of snapping back."""
-        self.geom.set_col_w(c, w)
-        self._base_w[c] = self.geom.col_w[c] / self._zoom
-
     def _scroll_rows(self, dr):
         self.geom.top_row += dr
-        self.redraw()
+        self._coalesce(self._scroll_v)          # small step -> native band blit
 
     def _scroll_px(self, dx):
         self.geom.scroll_x = max(0, self.geom.scroll_x + dx)
         self.geom.clamp(self.model.nrows())
-        self.redraw()
-
-    def _hwheel(self, delta):
-        # WM_MOUSEHWHEEL delta accumulates so a precision trackpad's small deltas
-        # still scroll. Same sign as <Shift-MouseWheel> above (right swipe -> right).
-        self._hacc -= delta * (40 / 120)
-        step = int(self._hacc)
-        if step:
-            self._hacc -= step
-            self._scroll_px(step)
-
-    def _install_hwheel(self):
-        """Subclass the Win32 wndproc to catch WM_MOUSEHWHEEL, which Tk 8.6 ignores
-        (only 8.7+ delivers it). Hooks both the canvas (window under the cursor) and
-        its toplevel since drivers differ in which one they post to; only the one
-        that receives the message fires. No-op off Windows / on failure."""
-        try:
-            import ctypes
-            from ctypes import wintypes
-        except Exception:
-            return
-        try:
-            user32 = ctypes.windll.user32
-            LRESULT = LONG_PTR = ctypes.c_ssize_t
-            GWLP_WNDPROC, WM_MOUSEHWHEEL = -4, 0x020E
-            WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT,
-                                         wintypes.WPARAM, wintypes.LPARAM)
-            setf = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
-            getf = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
-            for f in (setf, getf, user32.CallWindowProcW):
-                f.restype = LRESULT
-            setf.argtypes = [wintypes.HWND, ctypes.c_int, LONG_PTR]
-            getf.argtypes = [wintypes.HWND, ctypes.c_int]
-            user32.CallWindowProcW.argtypes = [LONG_PTR, wintypes.HWND, wintypes.UINT,
-                                               wintypes.WPARAM, wintypes.LPARAM]
-            self._hwheel_cb = []                   # keep refs alive (else GC -> crash)
-            for hwnd in {self.canvas.winfo_id(), self.winfo_toplevel().winfo_id()}:
-                old = getf(hwnd, GWLP_WNDPROC)
-
-                def proc(h, msg, wp, lp, old=old):
-                    if msg == WM_MOUSEHWHEEL:
-                        self._hwheel(ctypes.c_short((wp >> 16) & 0xFFFF).value)
-                        return 0
-                    return user32.CallWindowProcW(old, h, msg, wp, lp)
-
-                cb = WNDPROC(proc)
-                self._hwheel_cb.append(cb)
-                setf(hwnd, GWLP_WNDPROC, ctypes.cast(cb, ctypes.c_void_p).value)
-                self.canvas.bind("<Destroy>",
-                                 lambda e, h=hwnd, o=old: setf(h, GWLP_WNDPROC, o), add="+")
-        except Exception:
-            pass
+        self._coalesce(self.redraw)
 
     def _on_vscroll(self, *a):
         if a[0] == "moveto":
+            # Thumb drag jumps far each event, so the band's overscan is wasted
+            # work -- a plain viewport paint is cheaper than rebuilding the band.
             self.geom.top_row = int(float(a[1]) * self.model.nrows())
+            self._coalesce(self.redraw)
         else:
             self.geom.top_row += int(a[1]) * (3 if a[2] == "units" else self.geom.full_rows() - 1)
-        self.redraw()
+            self._coalesce(self._scroll_v)      # arrow/page: small step -> band blit
 
     def _on_hscroll(self, *a):
         if a[0] == "moveto":
             self.geom.scroll_x = int(float(a[1]) * (self.geom.content_w() - self.geom.frozen_w()))
         else:
             self.geom.scroll_x += int(a[1]) * 40
-        self.redraw()
+        self._coalesce(self.redraw)
 
-    # --- selection bounds --------------------------------------------
-    def _bounds(self):
-        return dict(top_hrow=0, last_row=self.model.nrows() - 1,
-                    last_col=self.model.ncols - 1)
-
-    def _scroll_into_view(self, r, c):
-        self.geom.scroll_into_view(r, c)
-
-    # --- mouse --------------------------------------------------------
-    def _on_motion(self, e):
-        self._set_corner_hover(self.geom.in_corner(e.x, e.y))
-        on_edge = self.geom.col_edge_hit(e.x, e.y, self.model.ncols) is not None
-        self.canvas.configure(cursor="sb_h_double_arrow" if on_edge else "")
-
-    def _set_corner_hover(self, over):
-        if over != self._corner_hover:
-            self._corner_hover = over
-            self.redraw()
-
+    # --- events -> controller -----------------------------------------
     def _on_press(self, e):
         self.canvas.focus_set()
-        self._commit_editor()
-        region, row, col = self.geom.hit(e.x, e.y, self.model.nrows(), self.model.ncols)
-        if row == 0 and region == "cell" and col is not None \
-                and self.geom.filter_btn_hit(e.x, e.y, col):   # header filter button
-            self._drag_region = None
-            FilterPopup(self, col, e.x_root, e.y_root)
-            return
-        ec = self.geom.col_edge_hit(e.x, e.y, self.model.ncols)
-        if ec is not None:                                     # grab a column border
-            self._resize_col = ec
-            self._resize_x0, self._resize_w0 = e.x, self.geom.col_w[ec]
-            self._drag_region = None
-            return
-        ctrl, shift = bool(e.state & 0x4), bool(e.state & 0x1)
-        self.sel, self.extra, self.active, self.anchor = S.resolve_click(
-            region, row, col, anchor=self.anchor, sel=self.sel, extra=self.extra,
-            ctrl=ctrl, shift=shift, **self._bounds())
-        self._drag_region = region
-        self._scroll_into_view(*self.active)
-        self.redraw()
+        self.ctl.on_press(e.x, e.y, bool(e.state & 0x4), bool(e.state & 0x1),
+                          (e.x_root, e.y_root))
 
-    def _on_drag(self, e):
-        if self._resize_col is not None:                       # live column resize
-            self._resize_to(self._resize_col, self._resize_w0 + (e.x - self._resize_x0))
-            self.redraw()
-            return
-        if self._drag_region is None:
-            return
-        g = self.geom
-        nrows, ncols = self.model.nrows(), self.model.ncols
-        # autoscroll: down past the bottom edge; up only when data exists above
-        # (so dragging into the pinned header selects it instead of scrolling)
-        if e.y > g.h - g.row_h:
-            g.top_row += 1
-        elif e.y < g.header_h and g.top_row > 1:
-            g.top_row -= 1
-        row = g.drag_row(e.y, nrows)
-        col = g.x_to_col(e.x, ncols)
-        if col is None:
-            col = g.frozen if e.x < g.gutter_w else ncols - 1
-        # spreadsheet frozen-pane crossing: dragging left past the freeze line targets the
-        # scrollable column hidden under the frozen block (scroll-into-view reveals
-        # it, one per motion) instead of snapping onto a pinned frozen column.
-        col = S.edge_reveal_col(col, anchor_col=self.anchor[1], frozen_cols=g.frozen,
-                                scroll_x=g.scroll_x, ncols=ncols, pointer_x=e.x,
-                                gutter_w=g.gutter_w, frozen_w=g.frozen_w(),
-                                body_w=g.w, leaf_x=g.col_x)
-        self.sel, self.active = S.resolve_drag(
-            self._drag_region, row, col, anchor=self.anchor, **self._bounds())
-        self._scroll_into_view(*self.active)           # push the view to the pressed-to cell
-        g.clamp(nrows)
-        self.redraw()
+    def _on_context(self, e):
+        self.canvas.focus_set()
+        self.ctl.context_select(e.x, e.y)
+        m = tk.Menu(self, tearoff=0)
+        st = "normal" if self.editable else "disabled"
+        m.add_command(label="Copy", command=self.ctl.copy)
+        m.add_command(label="Cut", command=self.ctl.cut, state=st)      # no-op on read-only
+        m.add_command(label="Paste", command=self.ctl.paste, state=st)
+        m.add_command(label="Delete", command=self.ctl.delete, state=st)
+        m.tk_popup(e.x_root, e.y_root)
 
-    def _on_release(self, e):
-        self._resize_col = None
-
-    def _on_double(self, e):
-        ec = self.geom.col_edge_hit(e.x, e.y, self.model.ncols)
-        if ec is not None:                                     # dbl-click border = autofit
-            self._autofit_col(ec)
-            return
-        region, row, col = self.geom.hit(e.x, e.y, self.model.nrows(), self.model.ncols)
-        if region == "cell" and self.editable:
-            self.active = (row, col)
-            self._begin_edit()
-
-    def _autofit_col(self, c):
-        # ponytail: fit header + currently-visible rows only. Scanning 1M rows for
-        # the widest cell would stall; visible-fit matches what the user sees.
-        sel = self._selected_cols()
-        cols = sorted(sel) if c in sel and len(sel) > 1 else [c]   # Ctrl+A -> fit all
-        rows = [0] + self.geom.visible_data_rows(self.model.nrows())
-        btn = self.geom.row_h - 8 + 8                          # filter button + gap (header only)
-        for cc in cols:
-            w = max((self.hfont if r == 0 else self.font).measure(self.model.cell(r, cc))
-                    + (btn if r == 0 else 0) for r in rows)
-            self._resize_to(cc, w + 12)                        # 5px text inset + margin
-        self.redraw()
-
-    def _selected_cols(self):
-        cols = set()
-        for (r1, c1, r2, c2) in self._ranges():
-            cols.update(range(min(c1, c2), max(c1, c2) + 1))
-        return cols
-
-    # --- keyboard -----------------------------------------------------
     def _on_key(self, e):
-        k, ch = e.keysym, e.char
-        ctrl, shift = bool(e.state & 0x4), bool(e.state & 0x1)
-        if ctrl:
-            low = k.lower()
-            if low == "f":
-                self.find.reveal(); return "break"
-            if low == "c":
-                self._copy(); return "break"
-            if low == "v":
-                self._paste(); return "break"
-            if low == "z":
-                self.model.undo(); return "break"
-            if low == "y":
-                self.model.redo(); return "break"
-            if low == "a":
-                lr, lc = self.model.data_extent()
-                self.sel, self.extra = (0, 0, lr, lc), []   # header + data (active at 0,0 -> paste in place)
-                self.active = self.anchor = (0, 0)
-                self.redraw(); return "break"
-        if k in ("Up", "Down", "Left", "Right", "Home", "End", "Prior", "Next"):
-            self._arrow(k, shift, ctrl); return "break"
-        if k in ("Return", "Tab"):
-            self._move((0, 1) if k == "Tab" else (1, 0)); return "break"
-        if k in ("Delete", "BackSpace"):
-            self.model.delete_selection(self._ranges()); return "break"
-        if k == "F2":
-            self._begin_edit(); return "break"
-        if len(ch) == 1 and ch.isprintable() and not ctrl and self.editable:
-            self._begin_edit(initial=ch); return "break"
-
-    def _arrow(self, key, shift, ctrl):
-        self.sel, self.extra, self.active, self.anchor = S.resolve_arrow(
-            key, active=self.active, anchor=self.anchor, shift=shift, ctrl=ctrl,
-            page_rows=self.geom.full_rows(),
-            occupied_row=self.model.occupied_row,
-            occupied_col=(lambda c: self.model.occupied_col_at(self.active[0], c)),
-            **self._bounds())
-        self._scroll_into_view(*self.active)
-        self.redraw()
-
-    def _move(self, d):
-        r = max(0, min(self.model.nrows() - 1, self.active[0] + d[0]))
-        c = max(0, min(self.model.ncols - 1, self.active[1] + d[1]))
-        self.active = self.anchor = (r, c)
-        self.sel, self.extra = (r, c, r, c), []
-        self._scroll_into_view(r, c)
-        self.redraw()
-
-    # --- clipboard ----------------------------------------------------
-    def _copy(self):
-        self.clipboard_clear()
-        self.clipboard_append(self.model.selection_text(self._ranges()))
-
-    def _paste(self):
-        try:
-            text = self.clipboard_get()
-        except tk.TclError:
-            return
-        box = self.model.paste_text(text, self._ranges(), self.active)
-        if box:
-            self.sel, self.extra = box, []
+        key = {"BackSpace": "Delete", "KP_Enter": "Return"}.get(e.keysym, e.keysym)
+        if len(key) == 1:
+            key = key.lower()
+        handled = self.ctl.on_key(key, bool(e.state & 0x1), bool(e.state & 0x4), e.char)
+        return "break" if handled else None
 
     # --- editor -------------------------------------------------------
-    def _begin_edit(self, initial=None):
+    def begin_edit(self, initial=None):
         if not self.editable:
             return
-        self._commit_editor()
-        r, c = self.active
+        self.commit_editor()
+        r, c = self.ctl.active
         bg, fg = edit_colors(r)            # keep the cell's own background + text colour
         var = tk.StringVar(value=initial if initial is not None else self.model.cell(r, c))
         ed = tk.Entry(self.canvas, textvariable=var, relief="solid", bd=1,
@@ -474,8 +481,10 @@ class TkGrid(tk.Frame):
                       highlightthickness=1, highlightcolor=T.ACCENT)
         ed._cell, ed._var = (r, c), var
         self._editor = ed
-        ed.bind("<Return>", lambda e: self._commit_editor(move=(1, 0)))
-        ed.bind("<Tab>", lambda e: (self._commit_editor(move=(0, 1)), "break")[1])
+        ed.bind("<Return>", lambda e: self.commit_editor(move=(1, 0)))
+        ed.bind("<Down>", lambda e: (self.commit_editor(move=(1, 0)), "break")[1])
+        ed.bind("<Up>", lambda e: (self.commit_editor(move=(-1, 0)), "break")[1])
+        ed.bind("<Tab>", lambda e: (self.commit_editor(move=(0, 1)), "break")[1])
         ed.bind("<Escape>", lambda e: self._cancel_editor())
         self._place_editor()
         ed.focus_set()
@@ -491,7 +500,7 @@ class TkGrid(tk.Frame):
         ed.place(x=self.geom.col_x(c), y=self.geom.row_y(r),
                  width=self.geom.col_w[c] + 1, height=self.geom.row_h_at(r) + 1)
 
-    def _commit_editor(self, move=None):
+    def commit_editor(self, move=None):
         ed = self._editor
         if not ed:
             return
@@ -501,8 +510,8 @@ class TkGrid(tk.Frame):
         self._editor = None
         self.canvas.focus_set()        # return focus so the next keystroke edits again
         if move:
-            self.active = self.anchor = (r, c)
-            self._move(move)
+            self.ctl.active = self.ctl.anchor = (r, c)
+            self.ctl.move(move)
         else:
             self.redraw()
 
@@ -515,8 +524,8 @@ class TkGrid(tk.Frame):
 
 
 # ---------------------------------------------------------------------
-# Toolkit widgets: filter popup + find bar. The find NAVIGATION logic is
-# generic (match list / index / nearest), but the widgets are Tk-specific.
+# Toolkit widgets: filter popup + find bar. The behaviour they drive lives in
+# core (FilterController / FindController); these are just the Tk widgets.
 # ---------------------------------------------------------------------
 CHECK, UNCHECK = "☑", "☐"
 
@@ -524,11 +533,11 @@ CHECK, UNCHECK = "☑", "☐"
 class FilterPopup(tk.Toplevel):
     def __init__(self, grid, col, x_root, y_root):
         super().__init__(grid)
-        self.g, self.model, self.col = grid, grid.model, col
+        self.g, self.model = grid, grid.model
+        self.ctl = FilterController(grid.model, col)
         self.overrideredirect(True)
         self.configure(bg=_UI_BG, bd=1, relief="solid")
         self.geometry("+%d+%d" % (x_root, y_root))
-        self._state = None                 # distinct scan is deferred (see _load)
 
         self._btn("Sort A → Z", lambda: self._sort(True))
         self._btn("Sort Z → A", lambda: self._sort(False))
@@ -561,95 +570,55 @@ class FilterPopup(tk.Toplevel):
     def _load(self):
         if not self.winfo_exists():
             return
-        self._active = self.model._filters.get(self.col)
-        self._preloaded, self._capped = self.model.distinct_capped(self.col)
-        self._state = {v: self._checked(v) for v in self._preloaded}
+        self.ctl.load()
         self._repopulate()
-
-    def _checked(self, v):
-        """Checked state of a value -- an explicit user toggle, else the default
-        from the active filter (all allowed when there's no filter)."""
-        if self._state and v in self._state:
-            return self._state[v]
-        return self._active is None or v in self._active
 
     def _btn(self, text, cmd, enabled=True):
         tk.Button(self, text=text, command=cmd, anchor="w", relief="flat",
                   bg=_UI_BG, fg=T.TXT, activebackground="#ddd6c8",
                   state="normal" if enabled else "disabled").pack(fill="x", padx=2)
 
-    def _rows(self):
-        q = self.search.get().strip().lower()
-        if not q:
-            return self._preloaded
-        if self._capped:                   # search the whole column, not just the preview
-            return self.model.distinct_matching(self.col, q)
-        return [v for v in self._preloaded if q in v.lower()]
-
     def _repopulate(self):
-        if self._state is None:            # still loading the distinct scan
+        if self.ctl.state is None:         # still loading the distinct scan
             return
         self.lst.delete(0, "end")
-        rows = self._rows()
-        all_on = bool(rows) and all(self._checked(v) for v in rows)
-        self.lst.insert("end", "%s (Select all)" % (CHECK if all_on else UNCHECK))
+        rows = self.ctl.rows(self.search.get())
+        self.lst.insert("end", "%s (Select all)" % (CHECK if self.ctl.all_on(rows) else UNCHECK))
         for v in rows:
-            self.lst.insert("end", "%s %s" % (CHECK if self._checked(v) else UNCHECK,
+            self.lst.insert("end", "%s %s" % (CHECK if self.ctl.checked(v) else UNCHECK,
                                               v if v else "(blank)"))
-        if len(rows) >= self.model.DISTINCT_CAP:     # list truncated -> tell the user to narrow
+        if self.ctl.truncated(rows):       # list truncated -> tell the user to narrow
             self.lst.insert("end", "  … too many to list — type to search")
             self.lst.itemconfig("end", fg="#8a8578")
 
     def _toggle(self, e):
-        if self._state is None:
+        if self.ctl.state is None:
             return "break"
         i = self.lst.nearest(e.y)
-        rows = self._rows()
+        rows = self.ctl.rows(self.search.get())
         if i == 0:
-            target = not (rows and all(self._checked(v) for v in rows))
-            for v in rows:
-                self._state[v] = target
+            self.ctl.toggle_all(rows)
         elif 1 <= i <= len(rows):
-            v = rows[i - 1]
-            self._state[v] = not self._checked(v)
+            self.ctl.toggle(rows[i - 1])
         self._repopulate()
         return "break"
 
     def _sort(self, asc):
-        self.model.set_sort(self.col, asc); self.destroy()
+        self.model.set_sort(self.ctl.col, asc); self.destroy()
 
     def _clear(self):
-        self.model.clear_column_filter(self.col); self.destroy()
+        self.model.clear_column_filter(self.ctl.col); self.destroy()
 
     def _text(self, op):
         val = simpledialog.askstring("Text filter", op.capitalize() + ":", parent=self)
         if val is not None:
-            self.model.set_text_filter(self.col, op, val); self.destroy()
+            self.model.set_text_filter(self.ctl.col, op, val); self.destroy()
 
     def _apply(self):
-        if self._state is None:            # OK before the list loaded = no-op
+        if self.ctl.state is None:         # OK before the list loaded = no-op
             self.destroy(); return
-        self._commit(self.search.get().strip())
+        self.ctl.commit(self.search.get())
         self.destroy()
-
-    def _commit(self, query):
-        if query:
-            rows = self._rows()
-            if len(rows) >= self.model.DISTINCT_CAP:       # still too many -> "contains"
-                self.model.set_text_filter(self.col, "contains", query)
-            else:                                          # filter TO the checked matches
-                keep = {v for v in rows if self._checked(v)}
-                self.model.set_filter(self.col, keep or None)
-            return
-        known = set(self._preloaded) | set(self._state)
-        checked = {v for v in known if self._checked(v)}
-        # Clear when everything's checked and we truly know it's everything: no
-        # active filter, or the full distinct set fits (not capped). Otherwise
-        # keep exactly the checked members (inclusion).
-        if len(checked) == len(known) and (self._active is None or not self._capped):
-            self.model.set_filter(self.col, None)
-        else:
-            self.model.set_filter(self.col, checked)
 
 
 class FindBar(tk.Frame):
@@ -659,7 +628,7 @@ class FindBar(tk.Frame):
         super().__init__(grid.canvas, bg=_UI_BG, bd=2, relief="solid",
                          highlightbackground=T.ACCENT, highlightthickness=2)
         self.g = grid
-        self.ctl = FindController(grid)
+        self.ctl = FindController(grid.ctl)
         self.ctl.on_count = lambda text: self.count.configure(text=text)
         self._case = self._scope_on = False
         self._after = None
@@ -681,7 +650,7 @@ class FindBar(tk.Frame):
         tk.Button(self, text="✕", command=self.close, relief="flat", bg=_UI_BG).pack(side="left")
 
     def reveal(self):
-        has_scope = self.ctl.open(self.g._ranges())
+        has_scope = self.ctl.open(self.g.ctl.ranges())
         self._scope_on = has_scope
         self.scope_btn.configure(fg=T.ACCENT if has_scope else "#999",
                                  state="normal" if has_scope else "disabled")
@@ -701,7 +670,7 @@ class FindBar(tk.Frame):
     def _on_type(self, e):
         if e.keysym in ("Return", "Escape"):
             return
-        if self._after:                                # 120ms debounce (matches the example)
+        if self._after:                                # 120ms keystroke debounce
             self.after_cancel(self._after)
         self._after = self.after(120, lambda: self.ctl.run(self.entry.get(), navigate=False))
 

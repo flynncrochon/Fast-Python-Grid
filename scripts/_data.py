@@ -37,3 +37,19 @@ def gen_rows(n):
 
 def rows_arg(argv, default=100_000):
     return int(argv[argv.index("--rows") + 1]) if "--rows" in argv else default
+
+
+def style_demo(model):
+    """Data-driven per-cell styling so the demos exercise fg / bold / bg:
+    Chg% red/green by sign, 'Strong Buy' ratings bold-green, 'watch' notes flagged
+    amber. Call BEFORE building the grid (model.changed is still a no-op) so the
+    bulk set doesn't fire a redraw per cell."""
+    chg, rating, note = HEADERS.index("Chg%"), HEADERS.index("Rating"), HEADERS.index("Note")
+    for gr in range(1, model._real_rows()):
+        v = model.cell(gr, chg)
+        if v:
+            model.set_cell_style(gr, chg, fg="#c0392b" if v.startswith("-") else "#1e8449", bold=True)
+        if model.cell(gr, rating) == "Strong Buy":
+            model.set_cell_style(gr, rating, fg="#1e8449", bold=True)
+        if model.cell(gr, note) == "watch":
+            model.set_cell_style(gr, note, bg="#fff3b0")

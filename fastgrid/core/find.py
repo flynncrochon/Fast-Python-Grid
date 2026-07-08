@@ -1,7 +1,7 @@
 """Ctrl+F find controller -- GUI-free search/navigation over model.find_matches.
 
 Both the Tk and Qt find bars drive this identical logic; only the surrounding
-widgets differ. Mirrors paintgrid's GridController find behaviour:
+widgets differ:
 
   * highlight every matching cell (lazy, via model find-state) + a distinct
     active-match marker;
@@ -16,9 +16,10 @@ widgets differ. Mirrors paintgrid's GridController find behaviour:
 
 The controller talks to the host grid through a tiny surface it already exposes:
 ``.active``/``.anchor``/``.sel``/``.extra`` (selection state), ``.model`` and
-``._scroll_into_view(r, c)``. Highlight repaints happen via ``model.set_find`` /
+``.scroll_into_view(r, c)``. Highlight repaints happen via ``model.set_find`` /
 ``model.clear_find`` (which fire the model's change callback -> the grid redraws).
 """
+from .selection import normalize
 
 
 class FindController:
@@ -38,13 +39,10 @@ class FindController:
     @staticmethod
     def _scope_of(ranges):
         """A meaningful scope = the selection when it covers more than one cell."""
-        rngs = [(min(a, c), min(b, d), max(a, c), max(b, d)) for (a, b, c, d) in ranges]
+        rngs = normalize(ranges)
         multi = len(rngs) > 1 or (rngs and (rngs[0][0] != rngs[0][2]
                                             or rngs[0][1] != rngs[0][3]))
         return rngs if multi else None
-
-    def scope_available(self, ranges):
-        return self._scope_of(ranges) is not None
 
     def open(self, ranges):
         """Enter find: capture scope from the current selection, anchor nearest on
@@ -76,7 +74,7 @@ class FindController:
             if self.scope is None:                       # collapse selection onto the match
                 self.grid.active = self.grid.anchor = cell
                 self.grid.sel, self.grid.extra = (cell[0], cell[1], cell[0], cell[1]), []
-            self.grid._scroll_into_view(*cell)           # scoped: keep selection, just reveal
+            self.grid.scroll_into_view(*cell)            # scoped: keep selection, just reveal
         self.model.set_find(self.query, self.case, self.scope, cell)   # highlight + redraw
 
     def step(self, delta):

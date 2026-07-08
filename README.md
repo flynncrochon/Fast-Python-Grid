@@ -1,20 +1,30 @@
 # Fast Python Grid
 
-A fast, direct-painted spreadsheet grid for high-volume data (tens of thousands
-of rows — instant scroll / select / filter / find). The logic is written **once**
-in a GUI-free core; each toolkit is a thin renderer over it.
+A fast, direct-painted spreadsheet grid for tens of thousands of rows. Scroll,
+select, filter and find stay instant because only the visible cells are ever
+built. The grid logic lives in a GUI-free core; each toolkit is a thin renderer
+over it.
 
 ```
 fastgrid/
-  core/        model · geometry · selection · paint() -> display list   (no GUI)
-  renderer/    tk.py (tkinter, stdlib — no Pillow) · qt.py (PySide6)
+  core/        model, geometry, selection, paint() -> display list  (no GUI)
+  renderer/    tk.py (tkinter, stdlib) · qt.py (PySide6)
 scripts/       demo_tk.py · demo_qt.py · bench.py · check_select.py
 ```
 
-`core.paint()` returns a **display list** — pure-data draw ops for the ~visible
-cells — and the renderers just blit it. Same list under both toolkits, so they
-look and behave identically. See [fastgrid/README.md](fastgrid/README.md) for the
-architecture.
+`core.paint()` returns a display list (plain-data draw ops for the visible
+cells); the renderers just draw it. Same list under both toolkits, so Tk and Qt
+behave the same:
+
+```
+dl.cells    = [(x, y, w, h, text, bg, fg, flags), ...]   # ~visible cells, back-to-front
+dl.overlays = [("line"|"rect"|"funnel", ...), ...]       # chrome drawn after cells
+```
+
+`core.paint` decides every colour, position and z-order; a renderer is ~"for
+each cell fill a rect + draw text; for each overlay draw a line/rect/triangle".
+
+![fastgrid sample grid: headers, frozen columns, per-column filters](docs/screenshot.png)
 
 ## Quick start
 
@@ -29,7 +39,7 @@ win = make_sheet(
 win.mainloop()
 ```
 
-Double-click or type to edit; Enter/Tab commit, Ctrl+Z/Y undo/redo, Ctrl+C/V
+Double-click or type to edit. Enter/Tab commit, Ctrl+Z/Y undo/redo, Ctrl+C/V
 copy/paste, Ctrl+A select-all, Ctrl+F find, ▼ on a header to filter/sort.
 
 ```python
@@ -49,8 +59,7 @@ python scripts/check_select.py    # selection correctness
 
 ## Performance
 
-Viewport-virtualized: only the ~visible cells are ever built, so cost is flat in
-the row count.
+Only the visible cells are built, so cost is flat in the row count.
 
 ```
 rows         core paint()   tk redraw (items)     qt repaint
@@ -61,14 +70,13 @@ rows         core paint()   tk redraw (items)     qt repaint
 
 ## Dependencies
 
-- **Tk renderer**: standard library only (tkinter). No Pillow, no Qt.
-- **Qt renderer**: PySide6.
+- Tk renderer: standard library only (tkinter).
+- Qt renderer: PySide6.
 
 ## Features
 
 Frozen columns, a pinned selectable header row, spreadsheet-style selection
 (click/drag/Ctrl/Shift, whole row/column, select-all, Ctrl+arrow block jumps),
-in-cell editing, copy/paste/delete, undo/redo, per-column value + text filters,
-A→Z/Z→A sort, and Ctrl+F find with prev/next, case, and selection scope. **Both
-renderers wire all of it** — the selection state machine and the filter/find
-navigation live in `core`, so Tk and Qt behave identically.
+in-cell editing, copy/paste/delete, undo/redo, per-column value and text
+filters, A→Z/Z→A sort, and Ctrl+F find with prev/next, case, and selection
+scope. Both renderers wire all of it.

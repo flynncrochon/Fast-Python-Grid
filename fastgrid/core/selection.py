@@ -1,10 +1,8 @@
 """The one shared selection + frozen-pane state machine for every grid mode.
 
-Read-only and editable grids used to carry two hand-written copies of "what does
-a click/drag/arrow do", which drifted and produced inconsistent header /
-frozen-cell selection. Every selection and freeze decision now routes through
-these pure functions, so both modes select, extend and cross frozen panes
-IDENTICALLY — there is exactly one copy of this logic.
+Every selection and freeze decision routes through these pure functions, so both
+read-only and editable grids select, extend and cross frozen panes IDENTICALLY --
+one copy of "what does a click/drag/arrow do".
 
 Coordinates are the HOST grid's own; the bounds are passed in, and the returned
 selection tuples come back in those same coordinates. Grids differ only in where
@@ -30,6 +28,11 @@ Modifier semantics (spreadsheet-style, identical across grids): a plain click/Sh
 collapses the disjoint Ctrl-click ranges to one; Ctrl banks the active range and
 starts a fresh one; Ctrl+Shift extends the active range while keeping the others.
 """
+
+
+def normalize(ranges):
+    """Each (r1, c1, r2, c2) rewritten so r1<=r2 and c1<=c2."""
+    return [(min(a, c), min(b, d), max(a, c), max(b, d)) for (a, b, c, d) in ranges]
 
 
 def resolve_click(region, row, col, *, top_hrow, last_row, last_col,
@@ -115,24 +118,6 @@ def edge_reveal_col(col, *, anchor_col, frozen_cols, scroll_x, ncols,
     if pointer_x > body_w:
         return min(ncols - 1, col + 1)
     return col
-
-
-def drag_target_row(*, pointer_y, scroll_y, header_h, row_h, first_data,
-                    top_row, last_row):
-    """Row a drag maps to, computed from CONTENT y (pointer + scroll) UNIFORMLY.
-
-    This is what makes an upward drag into the pinned header strip climb the
-    selection one row at a time — the caller's scroll-into-view then pushes the
-    view up — instead of JUMPING onto a header band. It reaches the header
-    pseudo-rows ONLY when the body is actually scrolled to the very top.
-
-    ``first_data`` is the grid's first data row in its own coords; ``header_h``
-    is the pinned-header height (the letter + title bands). The result
-    is clamped to ``[top_row, last_row]``. Both grids call this so they 'push up
-    to the frozen cell' identically rather than one jumping to the top row.
-    """
-    r = first_data + int((pointer_y + scroll_y - header_h) // row_h)
-    return max(top_row, min(last_row, r))
 
 
 def edge_scan(start, step, lo, hi, occupied):

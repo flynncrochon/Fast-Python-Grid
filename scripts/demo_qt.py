@@ -6,13 +6,14 @@
 """
 import sys
 
-from _data import HEADERS, COL_W, gen_rows, rows_arg
+from _data import HEADERS, COL_W, gen_rows, rows_arg, style_demo
 
 
 def _tab(editable):
     from fastgrid.core.model import GridModel
     from fastgrid.renderer.qt import QtGrid
     model = GridModel(HEADERS, gen_rows(_tab.rows), editable=editable)
+    style_demo(model)                          # per-cell fg/bold/bg showcase
     return QtGrid(model, editable=editable, frozen=2, col_w=COL_W)
 
 
