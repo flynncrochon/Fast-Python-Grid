@@ -7,16 +7,16 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# The two native DLLs. Their .cpp #pragma comment(lib, ...) the Windows libs, so
-# no target_link_libraries needed. No "lib" prefix -> ctypes loads them by name.
-add_library(surface  SHARED src/core/_gpu/surface.cpp)
-add_library(gridcore SHARED src/core/_gridstore/gridcore.cpp)
+# The two native DLLs, sources in fastpygrid/csrc. Their .cpp #pragma comment(lib,
+# ...) the Windows libs, so no target_link_libraries needed. No "lib" prefix ->
+# ctypes loads them by name.
+add_library(surface  SHARED fastpygrid/csrc/surface.cpp)
+add_library(gridcore SHARED fastpygrid/csrc/gridcore.cpp)
 set_target_properties(surface gridcore PROPERTIES PREFIX "")
 
-# Install lays out the `fastpygrid` package: each .dll beside its module, plus the
-# .py sources (no .cpp). Destinations are under fastpygrid/ so this works both for
-# build.bat (--prefix dist -> dist/fastpygrid) and the scikit-build-core wheel
-# (prefix = wheel root -> fastpygrid/ in site-packages).
-install(TARGETS surface  RUNTIME DESTINATION fastpygrid/core/_gpu       LIBRARY DESTINATION fastpygrid/core/_gpu)
-install(TARGETS gridcore RUNTIME DESTINATION fastpygrid/core/_gridstore LIBRARY DESTINATION fastpygrid/core/_gridstore)
-install(DIRECTORY src/ DESTINATION fastpygrid FILES_MATCHING PATTERN "*.py")
+# Install lays out the `fastpygrid` package: both .dll drop into core/ beside the
+# .py that loads them (csrc/ sources are not shipped). Destinations are under
+# fastpygrid/ so this works both for build.bat (--prefix dist -> dist/fastpygrid)
+# and the scikit-build-core wheel (prefix = wheel root -> fastpygrid/ in site-packages).
+install(TARGETS surface gridcore RUNTIME DESTINATION fastpygrid/core LIBRARY DESTINATION fastpygrid/core)
+install(DIRECTORY fastpygrid/ DESTINATION fastpygrid FILES_MATCHING PATTERN "*.py")

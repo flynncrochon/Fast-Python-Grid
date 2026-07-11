@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <title>Fast Python Grid mark</title>
+  <defs>
+    <clipPath id="round3"><rect x="48" y="48" width="160" height="160" rx="26"/></clipPath>
+  </defs>
+  <g clip-path="url(#round3)">
+    <rect x="48" y="48" width="53.33" height="53.33" fill="#E8632B"/>
+    <g stroke="#9AA0A8" stroke-width="7" stroke-linecap="round">
+      <line x1="101.33" y1="48" x2="101.33" y2="208"/>
+      <line x1="154.67" y1="48" x2="154.67" y2="208"/>
+      <line x1="48" y1="101.33" x2="208" y2="101.33"/>
+      <line x1="48" y1="154.67" x2="208" y2="154.67"/>
+    </g>
+  </g>
+  <rect x="48" y="48" width="160" height="160" rx="26" stroke="#70757C" stroke-width="9"/>
+</svg>

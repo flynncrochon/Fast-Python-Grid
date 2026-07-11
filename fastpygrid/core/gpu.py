@@ -1,7 +1,7 @@
 """Direct2D/GPU renderer engine (Windows only) -- TOOLKIT-NEUTRAL.
 
 Blits the core display list (paint()) onto a Direct2D surface driven by a small
-C-ABI DLL (see _gpu/surface.cpp), loaded via ctypes. The GPU compositor keeps the
+C-ABI DLL (see ../csrc/surface.cpp), loaded via ctypes. The GPU compositor keeps the
 zoomed-out full-rebuild cheap; scrolling just repaints the viewport and Presents.
 
 This module imports NO GUI toolkit. It provides:
@@ -64,7 +64,7 @@ def _sb_offset(pos, grab, track_start, track_len, tlen, content, view):
     span = max(1, track_len - tlen)
     return int(round((pos - grab - track_start) / span * (content - view)))
 
-_DLL_DIR = os.path.join(os.path.dirname(__file__), "_gpu")
+_DLL_DIR = os.path.dirname(__file__)          # surface.dll installs into core/, beside this file
 _DLL_PATH = os.path.join(_DLL_DIR, "surface.dll")
 
 

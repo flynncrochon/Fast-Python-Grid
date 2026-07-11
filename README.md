@@ -1,37 +1,29 @@
-# Fast Python Grid
+<p align="center">
+  <img src="docs/logo.svg" alt="Fast Python Grid" width="420">
+</p>
 
 A GPU-painted spreadsheet grid for tens of thousands of rows. Only visible cells
 are built, so scroll, select, filter and find stay instant. A GUI-free core
-holds the logic; one Direct2D engine draws it, under a thin Tk or Qt host.
+holds the logic. One Direct2D engine draws it, under a thin Tk or Qt host.
 
-## Layout
-
-```
-Fast-Python-Grid/
-|-- src/                    # fastpygrid .py sources (no DLLs live here)
-|   |-- core/               # model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine)
-|   |   |-- _gpu/           # surface.cpp
-|   |   `-- _gridstore/     # gridcore.cpp
-|   `-- render/             # tk.py (tkinter host), qt.py (PySide6 host)
-|-- CMakeLists.txt          # compiles the DLLs (scikit-build-core)
-|-- build.bat               # python -m build -> dist/*.whl + *.tar.gz (same as CI/PyPI)
-|-- demos/                  # demo_gpu_tk.py, demo_gpu_qt.py, _data.py, setup.bat (wheel into demos/.venv)
-`-- scripts/
-    |-- tests/              # check_select.py, fuzz_coremodel.py (need fastpygrid installed)
-    `-- benchmarks/         # bench_geometry.py (need fastpygrid installed)
-```
-
-![fastpygrid sample grid: headers, frozen columns, per-column filters](docs/screenshot.png)
+![fastpygrid sample grid: a multi-cell selection with a column filter popup open](docs/screenshot.png)
 
 ## Requirements
 
 | Requirement | Details |
 |---|---|
-| **Windows only** | The renderer is Direct2D (`_gpu/surface.dll`): needs Windows and a Direct3D 11 GPU (falls back to the WARP software device if there's none). No macOS/Linux backend. |
+| **Windows only** | The renderer is Direct2D (`core/surface.dll`): needs Windows and a Direct3D 11 GPU (falls back to the WARP software device if there's none). No macOS/Linux backend. |
 | **Python 3.8+** | |
 | **Tk host** | Standard library only (`tkinter`). |
 | **Qt host** | Needs `PySide6` (`pip install PySide6`), the only dependency, and only for the Qt host. |
-| **Native DLLs** | Not committed; built into the wheel by `build.bat` (CMake via scikit-build-core, which finds MSVC). `surface.dll` draws the Direct2D surface; `gridcore.dll` is an optional C++ data core (falls back to pure Python if missing). Building needs CMake + MSVC; end users just `pip install fastpygrid`. |
+| **Native DLLs** | Not committed. They build into the wheel via `build.bat` (CMake through scikit-build-core, which finds MSVC). `surface.dll` draws the Direct2D surface and `gridcore.dll` is an optional C++ data core (falls back to pure Python if missing). Building needs CMake + MSVC. |
+
+## Install
+
+```bash
+pip install fastpygrid            # Tk host (stdlib only)
+pip install fastpygrid PySide6    # add the Qt host
+```
 
 ## Example
 
@@ -56,32 +48,7 @@ win = make_sheet(headers, rows, frozen_columns=2)
 win.mainloop()                                          # aliases app.exec()
 ```
 
-## Build
-
-```bash
-build.bat
-```
-
-Runs `python -m build`, which drives CMake to compile the DLLs and produce
-`dist/fastpygrid-*.whl` + `.tar.gz` (same artifacts as CI/PyPI). Needs CMake,
-MSVC, and Python's `build`. Re-run after any `.cpp`/`.py` change.
-
-## Run demo
-
-`demos/setup.bat` creates `demos/.venv` and installs the freshly built wheel.
-Run it after `build.bat`, then:
-
-```bash
-demos\demo.bat tk                                        # tkinter host, 100k rows
-demos\demo.bat qt                                        # Qt host, same data
-demos\demo.bat tk --rows 500000                          # stress it
-demos\.venv\Scripts\python scripts/tests/check_select.py # selection-state-machine check
-demos\.venv\Scripts\python scripts/tests/fuzz_coremodel.py  # C++ data core vs oracle
-```
-
-Any env with `pip install .` runs the scripts; the demo venv is just handy.
-
-## API
+## Interface
 
 The library is two things: `make_sheet()`, which opens a window, and the
 `GridModel` it returns, which you call to style cells, add dropdowns or draw
@@ -99,7 +66,7 @@ Direct2D surface can't be created (DLL missing or no D3D device).
 
 | Argument | Type | Default | What it does |
 |---|---|---|---|
-| `headers` | `list[str]` or `list[list[str]]` | required | Column titles. A list of lists gives stacked headers; adjacent equal labels in the upper rows merge into group bands. |
+| `headers` | `list[str]` or `list[list[str]]` | required | Column titles. A list of lists gives stacked headers, where adjacent equal labels in the upper rows merge into group bands. |
 | `rows` | `list[list]` | required | The data, row by row. Values are stringified. |
 | `frozen_columns` | `int` | `0` | Pin this many leading columns against horizontal scroll. |
 | `view_only` | `bool` | `False` | Read-only sheet: no edit, paste or delete. |
@@ -139,7 +106,7 @@ Reach the model through `win.model`.
 ```python
 m = win.model
 m.cell(1, 0)                 # 'AAPL'
-m.set_cell(1, 3, "191.55")   # bump Apple's price; True
+m.set_cell(1, 3, "191.55")   # bump Apple's price, returns True
 m.ncols                      # 4
 ```
 
@@ -150,7 +117,7 @@ filter.
 
 | Call | What it does |
 |---|---|
-| `set_cell_style(gr, col, fg=None, bg=None, bold=None)` | Style one cell. `fg`/`bg` are `#rrggbb`; `None` leaves an attribute as-is. |
+| `set_cell_style(gr, col, fg=None, bg=None, bold=None)` | Style one cell. `fg`/`bg` are `#rrggbb`. `None` leaves an attribute as-is. |
 | `set_cell_choices(gr, col, choices)` | Turn one cell into a dropdown offering `choices`. `None` clears it. |
 | `set_col_choices(col, choices)` | Same for a whole column, one O(1) call. A per-cell choice overrides it. |
 
@@ -175,4 +142,44 @@ Read-only rows are keyed to the data and follow it.
 m.set_vline(1)              # rule after the 'Company' column
 m.set_hline(0)              # rule under the header
 m.set_readonly_col(0)       # Ticker can't be edited
+```
+
+## Build
+
+```bash
+build.bat
+```
+
+Runs `python -m build`, which drives CMake to compile the DLLs and produce
+`dist/fastpygrid-*.whl` + `.tar.gz` (same artifacts as CI/PyPI). Needs CMake,
+MSVC, and Python's `build`. Re-run after any `.cpp`/`.py` change.
+
+## Run demo
+
+`demos/setup.bat` creates `demos/.venv` and installs the freshly built wheel.
+Run it after `build.bat`, then:
+
+```bash
+demos\demo.bat tk                                        # tkinter host, 100k rows
+demos\demo.bat qt                                        # Qt host, same data
+demos\demo.bat tk --rows 500000                          # stress it
+demos\.venv\Scripts\python scripts/tests/check_select.py # selection-state-machine check
+demos\.venv\Scripts\python scripts/tests/fuzz_coremodel.py  # C++ data core vs oracle
+```
+
+## Layout
+
+```
+Fast-Python-Grid/
+|-- fastpygrid/             # the python package
+|   |-- core/               # model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine)
+|   |                       #   surface.dll + gridcore.dll compile in here, beside their loaders (not committed)
+|   |-- render/             # tk.py (tkinter host), qt.py (PySide6 host)
+|   `-- csrc/               # C++ sources: surface.cpp, gridcore.cpp
+|-- CMakeLists.txt          # compiles the DLLs (scikit-build-core)
+|-- build.bat               # python -m build -> dist/*.whl + *.tar.gz (same as CI/PyPI)
+|-- demos/                  # demo_gpu_tk.py, demo_gpu_qt.py, _data.py, setup.bat (wheel into demos/.venv)
+`-- scripts/
+    |-- tests/              # check_select.py, fuzz_coremodel.py (need fastpygrid installed)
+    `-- benchmarks/         # bench_geometry.py (need fastpygrid installed)
 ```
