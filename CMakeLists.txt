@@ -13,8 +13,10 @@ add_library(surface  SHARED src/core/_gpu/surface.cpp)
 add_library(gridcore SHARED src/core/_gridstore/gridcore.cpp)
 set_target_properties(surface gridcore PROPERTIES PREFIX "")
 
-# `cmake --install --prefix dist/fastgrid` lays out the runnable package:
-# the .dll beside its module, and the .py sources (no .cpp).
-install(TARGETS surface  RUNTIME DESTINATION core/_gpu       LIBRARY DESTINATION core/_gpu)
-install(TARGETS gridcore RUNTIME DESTINATION core/_gridstore LIBRARY DESTINATION core/_gridstore)
-install(DIRECTORY src/ DESTINATION . FILES_MATCHING PATTERN "*.py")
+# Install lays out the `fastgrid` package: each .dll beside its module, plus the
+# .py sources (no .cpp). Destinations are under fastgrid/ so this works both for
+# build.bat (--prefix dist -> dist/fastgrid) and the scikit-build-core wheel
+# (prefix = wheel root -> fastgrid/ in site-packages).
+install(TARGETS surface  RUNTIME DESTINATION fastgrid/core/_gpu       LIBRARY DESTINATION fastgrid/core/_gpu)
+install(TARGETS gridcore RUNTIME DESTINATION fastgrid/core/_gridstore LIBRARY DESTINATION fastgrid/core/_gridstore)
+install(DIRECTORY src/ DESTINATION fastgrid FILES_MATCHING PATTERN "*.py")
