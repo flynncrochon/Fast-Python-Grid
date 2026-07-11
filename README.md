@@ -6,17 +6,17 @@ built. The grid logic lives in a GUI-free core; a single toolkit-neutral
 Direct2D engine draws it, hosted by a thin Tk or Qt adapter.
 
 ```
-src/                   fastpygrid .py sources (no DLLs live here; becomes dist/fastpygrid)
+src/                   fastpygrid .py sources (no DLLs live here)
   core/      model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine)
     _gpu/        surface.cpp
     _gridstore/  gridcore.cpp
   render/    gpu_tk.py (tkinter host) · gpu_qt.py (PySide6 host)
-CMakeLists.txt  builds the DLLs + installs the .py into dist/fastpygrid/
-build.bat    runs CMake (configure/build/install) -> dist/fastpygrid/ (the runnable library)
-demos/       demo_gpu_tk.py · demo_gpu_qt.py · _data.py · setup.bat (stages demos/fastpygrid + demos/.venv)
+CMakeLists.txt  compiles the DLLs (driven by scikit-build-core)
+build.bat    runs `python -m build` -> dist/*.whl + *.tar.gz (the same as CI/PyPI)
+demos/       demo_gpu_tk.py · demo_gpu_qt.py · _data.py · setup.bat (installs the wheel into demos/.venv)
 scripts/
-  tests/       check_select.py · fuzz_coremodel.py       (import dist/fastpygrid)
-  benchmarks/  bench_geometry.py                          (import dist/fastpygrid)
+  tests/       check_select.py · fuzz_coremodel.py       (need fastpygrid installed)
+  benchmarks/  bench_geometry.py                          (need fastpygrid installed)
 ```
 
 `core.paint()` returns a display list (plain-data draw ops for the visible
@@ -41,7 +41,7 @@ each cell fill a rect + draw text; for each overlay draw a line/rect/triangle".
 | **Python 3.8+** | |
 | **Tk host** | Standard library only (`tkinter`, ships with Python). |
 | **Qt host** | Needs `PySide6` (`pip install PySide6`), the only dependency, and only if you use the Qt host. |
-| **Native DLLs** | Not committed -- `build.bat` runs CMake (which finds MSVC itself) to compile them into `dist/fastpygrid/`. `surface.dll` draws the Direct2D surface and `gridcore.dll` is an optional C++ data core (the model falls back to pure Python if it's missing). Needs CMake + MSVC on the machine. Run `build.bat` once (and after any `.cpp` or `.py` change), then run the demos. |
+| **Native DLLs** | Not committed -- built into the wheel by `build.bat` (CMake via scikit-build-core, which finds MSVC itself). `surface.dll` draws the Direct2D surface and `gridcore.dll` is an optional C++ data core (the model falls back to pure Python if it's missing). Needs CMake + MSVC to build; end users just `pip install fastpygrid` (prebuilt wheel). |
 
 ## Example
 
@@ -71,19 +71,24 @@ win.mainloop()                                          # aliases app.exec()
 build.bat
 ```
 
-Runs CMake to compile the DLLs and assemble the runnable library into
-`dist/fastpygrid/` (`.py` + `.dll` only). Needs CMake and MSVC. Re-run after any
-`.cpp` or `.py` change, then `demos/setup.bat` to stage `demos/fastpygrid` + `demos/.venv`.
+Runs `python -m build`, which drives CMake (via scikit-build-core) to compile the
+DLLs and produce `dist/fastpygrid-*.whl` + `.tar.gz` -- the same artifacts CI/PyPI
+build. Needs CMake, MSVC, and Python's `build`. Then `demos/setup.bat` creates
+`demos/.venv` and installs the wheel into it. Re-run both after any `.cpp`/`.py` change.
 
 ## Run
 
+After `build.bat` + `demos/setup.bat` (fastpygrid is installed in `demos/.venv`):
+
 ```bash
-python demos/demo_gpu_tk.py                 # tkinter host, 100k rows
-python demos/demo_gpu_qt.py                 # Qt host, same data
-python demos/demo_gpu_tk.py --rows 500000   # stress it
-python scripts/tests/check_select.py        # selection-state-machine check
-python scripts/tests/fuzz_coremodel.py      # C++ data core vs pure-Python oracle
+demos\demo.bat tk                                        # tkinter host, 100k rows
+demos\demo.bat qt                                        # Qt host, same data
+demos\demo.bat tk --rows 500000                          # stress it
+demos\.venv\Scripts\python scripts/tests/check_select.py # selection-state-machine check
+demos\.venv\Scripts\python scripts/tests/fuzz_coremodel.py  # C++ data core vs oracle
 ```
+
+(Any Python env with `pip install .` works for the scripts; the demo venv is just the handy one.)
 
 ## Performance
 

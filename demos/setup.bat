@@ -1,6 +1,6 @@
 @echo off
-REM Create demos\.venv, install deps, and stage the built library into demos\fastpygrid
-REM so the demos import it directly. Run build.bat first (it produces dist\fastpygrid).
+REM Create demos\.venv, install deps, and install the freshly built wheel into it
+REM so the demos import fastpygrid from the venv. Run build.bat first (dist\*.whl).
 setlocal
 REM This bat lives in demos/, so ROOT is its parent (the repo root).
 set "DEMOS=%~dp0"
@@ -20,12 +20,13 @@ if exist "%PY%" (
 
 "%PY%" -m pip install -r "%ROOT%requirements.txt" || exit /b 1
 
-if exist "%ROOT%dist\fastpygrid" (
-    robocopy "%ROOT%dist\fastpygrid" "%DEMOS%fastpygrid" /MIR >nul
-    if errorlevel 8 ( echo [setup] Copy of fastpygrid FAILED & exit /b 1 )
-    echo [setup] Staged fastpygrid -^> demos\fastpygrid
+set "WHEEL="
+for %%W in ("%ROOT%dist\*.whl") do set "WHEEL=%%W"
+if defined WHEEL (
+    "%PY%" -m pip install --force-reinstall "%WHEEL%" || exit /b 1
+    echo [setup] Installed %WHEEL%
 ) else (
-    echo [setup] NOTE: dist\fastpygrid not found. Run build.bat, then re-run setup.bat.
+    echo [setup] NOTE: no wheel in dist\. Run build.bat first, then re-run setup.bat.
 )
 
 echo [setup] Done. Run demo.bat to launch.

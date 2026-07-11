@@ -1,14 +1,14 @@
 @echo off
-REM Build the runnable fastpygrid library into dist\fastpygrid : the .py sources plus
-REM freshly compiled .dll (via CMake), nothing else. CMake finds MSVC itself.
-REM Run after changing any .py or .cpp, then run the demos against dist\fastpygrid.
+REM Build the distributable wheel + sdist into dist\ via `python -m build` -- the
+REM same path CI and PyPI use. scikit-build-core compiles the DLLs through
+REM CMakeLists.txt. Run after changing any .py or .cpp, then demos\setup.bat to
+REM install the fresh wheel into the demo venv.
 setlocal
 set "ROOT=%~dp0"
 
 if exist "%ROOT%dist" rmdir /s /q "%ROOT%dist"
-cmake -S "%ROOT%." -B "%ROOT%build" -DCMAKE_BUILD_TYPE=Release || exit /b 1
-cmake --build "%ROOT%build" --config Release || exit /b 1
-cmake --install "%ROOT%build" --prefix "%ROOT%dist" --config Release || exit /b 1
+py -m pip install --quiet --upgrade build || ( echo [build] could not install 'build'. Is Python on PATH? & exit /b 1 )
+py -m build "%ROOT%." || exit /b 1
 
-echo [build] dist -^> %ROOT%dist\fastpygrid
+echo [build] wheel + sdist -^> %ROOT%dist
 exit /b 0
