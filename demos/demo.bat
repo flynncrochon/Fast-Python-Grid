@@ -1,5 +1,5 @@
 @echo off
-REM Launch the fastgrid Tk or Qt GPU demo using the project's .venv (Python 3.10).
+REM Launch the fastpygrid Tk or Qt GPU demo using the project's .venv (Python 3.10).
 REM Usage:  demo.bat            -> prompts for tk or qt
 REM         demo.bat qt         -> runs the Qt (PySide6) demo
 REM         demo.bat tk         -> runs the Tk demo

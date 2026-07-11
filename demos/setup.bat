@@ -1,6 +1,6 @@
 @echo off
-REM Create demos\.venv, install deps, and stage the built library into demos\fastgrid
-REM so the demos import it directly. Run build.bat first (it produces dist\fastgrid).
+REM Create demos\.venv, install deps, and stage the built library into demos\fastpygrid
+REM so the demos import it directly. Run build.bat first (it produces dist\fastpygrid).
 setlocal
 REM This bat lives in demos/, so ROOT is its parent (the repo root).
 set "DEMOS=%~dp0"
@@ -20,12 +20,12 @@ if exist "%PY%" (
 
 "%PY%" -m pip install -r "%ROOT%requirements.txt" || exit /b 1
 
-if exist "%ROOT%dist\fastgrid" (
-    robocopy "%ROOT%dist\fastgrid" "%DEMOS%fastgrid" /MIR >nul
-    if errorlevel 8 ( echo [setup] Copy of fastgrid FAILED & exit /b 1 )
-    echo [setup] Staged fastgrid -^> demos\fastgrid
+if exist "%ROOT%dist\fastpygrid" (
+    robocopy "%ROOT%dist\fastpygrid" "%DEMOS%fastpygrid" /MIR >nul
+    if errorlevel 8 ( echo [setup] Copy of fastpygrid FAILED & exit /b 1 )
+    echo [setup] Staged fastpygrid -^> demos\fastpygrid
 ) else (
-    echo [setup] NOTE: dist\fastgrid not found. Run build.bat, then re-run setup.bat.
+    echo [setup] NOTE: dist\fastpygrid not found. Run build.bat, then re-run setup.bat.
 )
 
 echo [setup] Done. Run demo.bat to launch.

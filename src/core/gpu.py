@@ -13,10 +13,10 @@ This module imports NO GUI toolkit. It provides:
     wire buffer surface.cpp decodes.
   * TextField -- a custom text-input control (measures via a host callable).
 
-Host adapters live in their own files: fastgrid.render.gpu_tk (Tk) and
-fastgrid.render.gpu_qt (Qt). Use those modules' make_sheet() to launch.
+Host adapters live in their own files: fastpygrid.render.gpu_tk (Tk) and
+fastpygrid.render.gpu_qt (Qt). Use those modules' make_sheet() to launch.
 
-Build once:  build.bat   (compiles the DLLs and copies the package into dist\fastgrid)
+Build once:  build.bat   (compiles the DLLs and copies the package into dist\fastpygrid)
 """
 import ctypes
 import math
@@ -1498,7 +1498,7 @@ def _selftest():
 
     lib = _load_lib()
     if lib is None:
-        print("surface.dll not built -- run build.bat, then import from dist\\fastgrid")
+        print("surface.dll not built -- run build.bat, then import from dist\\fastpygrid")
         return 1
 
     # A: color/decode correctness -- one opaque rect, read the pixel back exactly.

@@ -1,4 +1,4 @@
-// Direct2D/DirectWrite render surface for the fastgrid D2D backend.
+// Direct2D/DirectWrite render surface for the fastpygrid D2D backend.
 //
 // C-ABI (loaded from Python via ctypes -- no pybind11, no Python.h, so one DLL
 // works across every Python on the machine). The whole display list crosses the

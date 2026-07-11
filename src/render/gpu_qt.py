@@ -1,4 +1,4 @@
-"""Qt (PySide6) host for the toolkit-neutral GpuEngine (fastgrid.core.gpu).
+"""Qt (PySide6) host for the toolkit-neutral GpuEngine (fastpygrid.core.gpu).
 
 Same shape as gpu_tk.py: the engine owns all rendering, overlays, scrollbars and
 input LOGIC and imports NO GUI toolkit. This file is the thin Qt adapter -- it
@@ -217,7 +217,7 @@ class GpuQtGrid(QtWidgets.QWidget):
 
 
 def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
-               col_w=None, title="fastgrid (gpu-qt)", uncap_rows=False, uncap_cols=False):
+               col_w=None, title="fastpygrid (gpu-qt)", uncap_rows=False, uncap_cols=False):
     """One-call sheet, Direct2D renderer under a Qt host. Creates a QApplication if
     none exists. Returns the window (with .model, .grid_view, .mainloop()). Raises
     if the GPU surface can't be built (DLL missing / no D3D device)."""
@@ -225,7 +225,7 @@ def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
     if lib is None:
         raise RuntimeError(
             "Gpu surface unavailable -- build it with "
-            "`python -m fastgrid.core.gpu --build`.")
+            "`python -m fastpygrid.core.gpu --build`.")
     app = QtWidgets.QApplication.instance()
     if app is None:
         _enable_dpi_awareness()          # process DPI-aware; Qt scaling off via env (top of file)

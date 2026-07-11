@@ -1,5 +1,5 @@
 """Shared sample data for the demos + benchmarks. Pure data: each caller puts
-fastgrid on sys.path itself (demos use demos/fastgrid, scripts use dist/)."""
+fastpygrid on sys.path itself (demos use demos/fastpygrid, scripts use dist/)."""
 
 HEADERS = ["Ticker", "Company", "Sector", "Price", "Chg%", "Volume", "Note"]
 SECTORS = ["Technology", "Energy", "Finance", "Health", "Consumer", "Utilities"]

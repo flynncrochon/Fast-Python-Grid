@@ -6,17 +6,17 @@ built. The grid logic lives in a GUI-free core; a single toolkit-neutral
 Direct2D engine draws it, hosted by a thin Tk or Qt adapter.
 
 ```
-src/                   fastgrid .py sources (no DLLs live here; becomes dist/fastgrid)
+src/                   fastpygrid .py sources (no DLLs live here; becomes dist/fastpygrid)
   core/      model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine)
     _gpu/        surface.cpp
     _gridstore/  gridcore.cpp
   render/    gpu_tk.py (tkinter host) · gpu_qt.py (PySide6 host)
-CMakeLists.txt  builds the DLLs + installs the .py into dist/fastgrid/
-build.bat    runs CMake (configure/build/install) -> dist/fastgrid/ (the runnable library)
-demos/       demo_gpu_tk.py · demo_gpu_qt.py · _data.py · setup.bat (stages demos/fastgrid + demos/.venv)
+CMakeLists.txt  builds the DLLs + installs the .py into dist/fastpygrid/
+build.bat    runs CMake (configure/build/install) -> dist/fastpygrid/ (the runnable library)
+demos/       demo_gpu_tk.py · demo_gpu_qt.py · _data.py · setup.bat (stages demos/fastpygrid + demos/.venv)
 scripts/
-  tests/       check_select.py · fuzz_coremodel.py       (import dist/fastgrid)
-  benchmarks/  bench_geometry.py                          (import dist/fastgrid)
+  tests/       check_select.py · fuzz_coremodel.py       (import dist/fastpygrid)
+  benchmarks/  bench_geometry.py                          (import dist/fastpygrid)
 ```
 
 `core.paint()` returns a display list (plain-data draw ops for the visible
@@ -31,7 +31,7 @@ dl.overlays = [("line"|"vline"|"hline"|"ring"|"tri", ...)]  # chrome drawn after
 `core.paint` decides every colour, position and z-order; the engine is ~"for
 each cell fill a rect + draw text; for each overlay draw a line/rect/triangle".
 
-![fastgrid sample grid: headers, frozen columns, per-column filters](docs/screenshot.png)
+![fastpygrid sample grid: headers, frozen columns, per-column filters](docs/screenshot.png)
 
 ## Requirements
 
@@ -41,12 +41,12 @@ each cell fill a rect + draw text; for each overlay draw a line/rect/triangle".
 | **Python 3.8+** | |
 | **Tk host** | Standard library only (`tkinter`, ships with Python). |
 | **Qt host** | Needs `PySide6` (`pip install PySide6`), the only dependency, and only if you use the Qt host. |
-| **Native DLLs** | Not committed -- `build.bat` runs CMake (which finds MSVC itself) to compile them into `dist/fastgrid/`. `surface.dll` draws the Direct2D surface and `gridcore.dll` is an optional C++ data core (the model falls back to pure Python if it's missing). Needs CMake + MSVC on the machine. Run `build.bat` once (and after any `.cpp` or `.py` change), then run the demos. |
+| **Native DLLs** | Not committed -- `build.bat` runs CMake (which finds MSVC itself) to compile them into `dist/fastpygrid/`. `surface.dll` draws the Direct2D surface and `gridcore.dll` is an optional C++ data core (the model falls back to pure Python if it's missing). Needs CMake + MSVC on the machine. Run `build.bat` once (and after any `.cpp` or `.py` change), then run the demos. |
 
 ## Example
 
 ```python
-from fastgrid.render.gpu_tk import make_sheet         # tkinter host (stdlib only)
+from fastpygrid.render.gpu_tk import make_sheet         # tkinter host (stdlib only)
 win = make_sheet(
     ["Ticker", "Company", "Sector", "Price"],
     [["AAPL", "Apple Inc.", "Technology", "189.20"],
@@ -60,7 +60,7 @@ Double-click or type to edit. Enter/Tab commit, Ctrl+Z/Y undo/redo, Ctrl+C/V
 copy/paste, Ctrl+A select-all, Ctrl+F find, ▼ on a header to filter/sort.
 
 ```python
-from fastgrid.render.gpu_qt import make_sheet          # PySide6 host
+from fastpygrid.render.gpu_qt import make_sheet          # PySide6 host
 win = make_sheet(headers, rows, frozen_columns=2)
 win.mainloop()                                          # aliases app.exec()
 ```
@@ -72,8 +72,8 @@ build.bat
 ```
 
 Runs CMake to compile the DLLs and assemble the runnable library into
-`dist/fastgrid/` (`.py` + `.dll` only). Needs CMake and MSVC. Re-run after any
-`.cpp` or `.py` change, then `demos/setup.bat` to stage `demos/fastgrid` + `demos/.venv`.
+`dist/fastpygrid/` (`.py` + `.dll` only). Needs CMake and MSVC. Re-run after any
+`.cpp` or `.py` change, then `demos/setup.bat` to stage `demos/fastpygrid` + `demos/.venv`.
 
 ## Run
 

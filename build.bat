@@ -1,7 +1,7 @@
 @echo off
-REM Build the runnable fastgrid library into dist\fastgrid : the .py sources plus
+REM Build the runnable fastpygrid library into dist\fastpygrid : the .py sources plus
 REM freshly compiled .dll (via CMake), nothing else. CMake finds MSVC itself.
-REM Run after changing any .py or .cpp, then run the demos against dist\fastgrid.
+REM Run after changing any .py or .cpp, then run the demos against dist\fastpygrid.
 setlocal
 set "ROOT=%~dp0"
 
@@ -10,5 +10,5 @@ cmake -S "%ROOT%." -B "%ROOT%build" -DCMAKE_BUILD_TYPE=Release || exit /b 1
 cmake --build "%ROOT%build" --config Release || exit /b 1
 cmake --install "%ROOT%build" --prefix "%ROOT%dist" --config Release || exit /b 1
 
-echo [build] dist -^> %ROOT%dist\fastgrid
+echo [build] dist -^> %ROOT%dist\fastpygrid
 exit /b 0

@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "fastpygrid"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fast, GPU-painted spreadsheet grid for tens of thousands of rows (Windows, Direct2D)."
 readme = "README.md"
 requires-python = ">=3.8"

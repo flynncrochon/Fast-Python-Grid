@@ -1,4 +1,4 @@
-"""Selection-correctness check for fastgrid's shared state machine.
+"""Selection-correctness check for fastpygrid's shared state machine.
 
 The one copy of "what does a click / drag / arrow do" lives in
 core/selection.py and drives BOTH renderers -- so this asserts it directly,
@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "dist"))
 
-from fastgrid.core import selection as S                        # noqa: E402
+from fastpygrid.core import selection as S                        # noqa: E402
 
 B = dict(top_hrow=0, last_row=99, last_col=6)     # a 100x7 grid
 
