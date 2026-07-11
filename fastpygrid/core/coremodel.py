@@ -18,7 +18,8 @@ import ctypes
 import os
 import struct
 
-from .model import GridModel, PAD_ROWS, _clean, _grow, _norm_ranges
+from .model import GridModel, _clean, _grow
+from .selection import normalize as _norm_ranges
 
 _DLL = os.path.join(os.path.dirname(__file__), "gridcore.dll")   # installs into core/, beside this file
 

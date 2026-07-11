@@ -9,7 +9,6 @@ Data index ``di = gr - H`` maps through ``_src_data`` to a source row in
 """
 from html.parser import HTMLParser
 
-from .selection import normalize as _norm_ranges
 
 PAD_ROWS = 50   # blank data rows kept navigable past the data (plain view only)
 
