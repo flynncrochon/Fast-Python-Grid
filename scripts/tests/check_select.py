@@ -5,12 +5,12 @@ core/selection.py and drives BOTH renderers -- so this asserts it directly,
 with no GUI. spreadsheet semantics: plain click resets, Ctrl banks a range, Shift
 extends, whole-row/col/select-all, Ctrl+arrow block jumps.
 
-    python scripts/check_select.py
+    python scripts/tests/check_select.py
 """
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "dist"))
 
 from fastgrid.core import selection as S                        # noqa: E402
 

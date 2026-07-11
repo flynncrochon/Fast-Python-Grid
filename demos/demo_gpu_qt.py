@@ -11,10 +11,9 @@ back when you scroll in again -- unless you typed out there, which grows the she
 Proves the toolkit-neutral GpuEngine runs unchanged under Qt. Build the DLL once:
     python -m fastgrid.core.gpu --build
 """
-import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+# _data.py and fastgrid/ both live next to this file (fastgrid staged by setup.bat).
 from _data import (HEADERS, COL_W, gen_rows, rows_arg, stream_styles, choices_demo,
                    lines_demo, readonly_demo)
 

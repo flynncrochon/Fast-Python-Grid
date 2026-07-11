@@ -8,10 +8,10 @@ REM         demo.bat qt --rows 500000   -> extra args pass through to the demo
 setlocal
 REM This bat lives in demos/, so ROOT is its parent (the repo root).
 for %%I in ("%~dp0..") do set "ROOT=%%~fI\"
-set "PY=%ROOT%.venv\Scripts\python.exe"
+set "PY=%~dp0.venv\Scripts\python.exe"
 
 if not exist "%PY%" (
-    echo [demo] .venv not found. Create it with:  py -3.10 -m venv .venv   (Qt demo also needs: .venv\Scripts\pip install PySide6)
+    echo [demo] demos\.venv not found. Run setup.bat first.
     exit /b 1
 )
 

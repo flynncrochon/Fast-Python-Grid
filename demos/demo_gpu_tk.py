@@ -13,10 +13,9 @@ keyboard nav, Ctrl+wheel zoom, F11 fullscreen (Esc exits), in-cell editing, drop
 cells, read-only columns, right-click menu, ▼ column filter/sort, and Ctrl+F find.
 Build the DLL once with:  python -m fastgrid.core.gpu --build
 """
-import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
+# _data.py and fastgrid/ both live next to this file (fastgrid staged by setup.bat).
 from _data import (HEADERS, COL_W, gen_rows, rows_arg, stream_styles, choices_demo,
                    lines_demo, readonly_demo)
 

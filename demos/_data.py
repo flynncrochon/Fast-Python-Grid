@@ -1,9 +1,5 @@
-"""Shared sample data for the demos + benchmarks. Also puts the repo root on
-sys.path so `import fastgrid` works when a script is run from scripts/."""
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+"""Shared sample data for the demos + benchmarks. Pure data: each caller puts
+fastgrid on sys.path itself (demos use demos/fastgrid, scripts use dist/)."""
 
 HEADERS = ["Ticker", "Company", "Sector", "Price", "Chg%", "Volume", "Note"]
 SECTORS = ["Technology", "Energy", "Finance", "Health", "Consumer", "Utilities"]

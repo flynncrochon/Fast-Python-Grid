@@ -16,7 +16,7 @@ This module imports NO GUI toolkit. It provides:
 Host adapters live in their own files: fastgrid.render.gpu_tk (Tk) and
 fastgrid.render.gpu_qt (Qt). Use those modules' make_sheet() to launch.
 
-Build the DLL once:  python -m fastgrid.core.gpu --build   (or run _gpu/build.bat)
+Build once:  build.bat   (compiles the DLLs and copies the package into dist\fastgrid)
 """
 import ctypes
 import math
@@ -92,9 +92,11 @@ def _load_lib():
 
 
 def build():
-    """Compile surface.dll via _gpu/build.bat. Returns True on success."""
-    bat = os.path.join(_DLL_DIR, "build.bat")
-    return subprocess.call([bat], cwd=_DLL_DIR, shell=True) == 0
+    """Build the whole dist (all .py + both DLLs) via the repo build.bat.
+    Dev-only: build.bat and the .cpp source aren't in the shipped package."""
+    root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
+    bat = os.path.join(root, "build.bat")
+    return subprocess.call([bat], cwd=root, shell=True) == 0
 
 
 def _col(c):
@@ -1496,7 +1498,7 @@ def _selftest():
 
     lib = _load_lib()
     if lib is None:
-        print("surface.dll not built -- run:  python -m fastgrid.core.gpu --build")
+        print("surface.dll not built -- run build.bat, then import from dist\\fastgrid")
         return 1
 
     # A: color/decode correctness -- one opaque rect, read the pixel back exactly.

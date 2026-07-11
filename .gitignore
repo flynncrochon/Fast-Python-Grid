@@ -3,7 +3,14 @@ __pycache__/
 *.obj
 *.exp
 *.lib
+*.dll
 .venv/
 venv/
-scripts/example/
-old/
+
+# build output (build.bat -> .py + .dll)
+dist/
+# cmake build tree
+build/
+
+# staged library copy (setup.bat)
+demos/fastgrid/

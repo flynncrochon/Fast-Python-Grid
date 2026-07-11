@@ -1,11 +1,13 @@
 """Hot-path bench for wide sheets: the per-frame column ops (visible_cols,
 x_to_col, col_edge_hit) and a full paint() display-list build, at growing column
 counts. Compares the bisect implementations against a linear reference so the
-speedup is explicit. Run: python scripts/bench_geometry.py
+speedup is explicit. Run: python scripts/benchmarks/bench_geometry.py
 """
+import os
+import sys
 import time
 
-import _data  # puts repo root on sys.path
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "dist"))
 from fastgrid.core.geometry import Geometry
 from fastgrid.core.model import GridModel
 from fastgrid.core.paint import paint

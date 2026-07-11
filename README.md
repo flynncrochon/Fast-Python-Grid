@@ -6,11 +6,17 @@ built. The grid logic lives in a GUI-free core; a single toolkit-neutral
 Direct2D engine draws it, hosted by a thin Tk or Qt adapter.
 
 ```
-fastgrid/
-  core/      model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine) + _gpu/ native
+src/                   fastgrid .py sources (no DLLs live here; becomes dist/fastgrid)
+  core/      model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine)
+    _gpu/        surface.cpp
+    _gridstore/  gridcore.cpp
   render/    gpu_tk.py (tkinter host) · gpu_qt.py (PySide6 host)
-demos/       demo_gpu_tk.py · demo_gpu_qt.py
-scripts/     check_select.py · fuzz_coremodel.py
+CMakeLists.txt  builds the DLLs + installs the .py into dist/fastgrid/
+build.bat    runs CMake (configure/build/install) -> dist/fastgrid/ (the runnable library)
+demos/       demo_gpu_tk.py · demo_gpu_qt.py · _data.py · setup.bat (stages demos/fastgrid + demos/.venv)
+scripts/
+  tests/       check_select.py · fuzz_coremodel.py       (import dist/fastgrid)
+  benchmarks/  bench_geometry.py                          (import dist/fastgrid)
 ```
 
 `core.paint()` returns a display list (plain-data draw ops for the visible
@@ -35,7 +41,7 @@ each cell fill a rect + draw text; for each overlay draw a line/rect/triangle".
 | **Python 3.8+** | |
 | **Tk host** | Standard library only (`tkinter`, ships with Python). |
 | **Qt host** | Needs `PySide6` (`pip install PySide6`), the only dependency, and only if you use the Qt host. |
-| **Native DLLs** | Prebuilt and shipped in the repo. `surface.dll` draws the Direct2D surface and `gridcore.dll` is an optional C++ data core (the model falls back to pure Python if it's missing). You only need to rebuild them with MSVC via `fastgrid/core/_gpu/build.bat` and `fastgrid/core/_gridstore/build.bat` when you change the C++. |
+| **Native DLLs** | Not committed -- `build.bat` runs CMake (which finds MSVC itself) to compile them into `dist/fastgrid/`. `surface.dll` draws the Direct2D surface and `gridcore.dll` is an optional C++ data core (the model falls back to pure Python if it's missing). Needs CMake + MSVC on the machine. Run `build.bat` once (and after any `.cpp` or `.py` change), then run the demos. |
 
 ## Example
 
@@ -59,14 +65,24 @@ win = make_sheet(headers, rows, frozen_columns=2)
 win.mainloop()                                          # aliases app.exec()
 ```
 
+## Build
+
+```bash
+build.bat
+```
+
+Runs CMake to compile the DLLs and assemble the runnable library into
+`dist/fastgrid/` (`.py` + `.dll` only). Needs CMake and MSVC. Re-run after any
+`.cpp` or `.py` change, then `demos/setup.bat` to stage `demos/fastgrid` + `demos/.venv`.
+
 ## Run
 
 ```bash
 python demos/demo_gpu_tk.py                 # tkinter host, 100k rows
 python demos/demo_gpu_qt.py                 # Qt host, same data
 python demos/demo_gpu_tk.py --rows 500000   # stress it
-python scripts/check_select.py              # selection-state-machine check
-python -m scripts.fuzz_coremodel            # C++ data core vs pure-Python oracle
+python scripts/tests/check_select.py        # selection-state-machine check
+python scripts/tests/fuzz_coremodel.py      # C++ data core vs pure-Python oracle
 ```
 
 ## Performance

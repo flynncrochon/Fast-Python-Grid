@@ -1,8 +1,10 @@
 """Differential fuzz: CoreModel (C++ backend) must match GridModel (oracle) over
-random op sequences. Run: python -m scripts.fuzz_coremodel [seed_count]"""
+random op sequences. Run: python scripts/tests/fuzz_coremodel.py [seed_count]"""
+import os
 import random
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "dist"))
 from fastgrid.core.model import GridModel
 from fastgrid.core.coremodel import CoreModel
 
