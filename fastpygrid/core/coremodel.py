@@ -20,7 +20,7 @@ import struct
 
 from .model import GridModel, PAD_ROWS, _clean, _grow, _norm_ranges
 
-_DLL = os.path.join(os.path.dirname(__file__), "_gridstore", "gridcore.dll")
+_DLL = os.path.join(os.path.dirname(__file__), "gridcore.dll")   # installs into core/, beside this file
 
 
 def _load():
