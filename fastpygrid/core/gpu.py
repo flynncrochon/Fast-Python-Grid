@@ -362,11 +362,11 @@ class GpuEngine:
 
     Host adapter contract (see TkHost):
         host.measure(text, bold=False) -> int      text width in px
-        host.after(ms, fn) -> handle ; host.after_cancel(handle) ; host.after_idle(fn)
-        host.clip_get() -> str ; host.clip_set(text)
-        host.focus() ; host.set_cursor(on_edge) ; host.fullscreen_toggle()
-        host.size() -> (w, h) ; host.hwnd() -> int
-        host.set_zoom_px(px) ; host.context_menu(root_xy, editable, actions)
+        host.after(ms, fn) -> handle, host.after_cancel(handle), host.after_idle(fn)
+        host.clip_get() -> str, host.clip_set(text)
+        host.focus(), host.set_cursor(on_edge), host.fullscreen_toggle()
+        host.size() -> (w, h), host.hwnd() -> int
+        host.set_zoom_px(px), host.context_menu(root_xy, editable, actions)
     The engine is also the GridController's host surface. Input arrives already
     normalized: press/motion/drag/release/wheel/key/configure/context."""
 
