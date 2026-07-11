@@ -46,7 +46,7 @@ def main():
     sel, active = S.resolve_drag("cell", 20, 6, anchor=(10, 2), **B)
     assert sel == (10, 2, 20, 6) and active == (20, 6)
 
-    # arrow: plain Down moves one; Shift extends; clamps at edges
+    # arrow: plain Down moves one, Shift extends, clamps at edges
     sel, _e, active, _a = S.resolve_arrow("Down", active=(5, 3), anchor=(5, 3),
                                           shift=False, ctrl=False, **B)
     assert active == (6, 3) and sel == (6, 3, 6, 3)

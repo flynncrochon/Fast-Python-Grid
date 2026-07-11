@@ -6,7 +6,8 @@
 Both hosts drive the SAME Direct2D engine, so behaviour and looks match.
 
     from fastpygrid.render.tk import make_sheet   # tkinter
-    win = make_sheet(headers, rows, frozen_columns=2); win.mainloop()
+    win = make_sheet(headers, rows, frozen_columns=2)
+    win.mainloop()
 """
 from .core import GridModel, selection, theme
 

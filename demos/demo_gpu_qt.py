@@ -13,7 +13,7 @@ Proves the toolkit-neutral GpuEngine runs unchanged under Qt. Build the DLL once
 """
 import sys
 
-# _data.py lives next to this file; fastpygrid is installed into demos/.venv by setup.bat.
+# _data.py lives next to this file. fastpygrid is installed into demos/.venv by setup.bat.
 from _data import (HEADERS, COL_W, gen_rows, rows_arg, stream_styles, choices_demo,
                    lines_demo, readonly_demo)
 
