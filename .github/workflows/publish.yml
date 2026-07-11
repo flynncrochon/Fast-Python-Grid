@@ -11,15 +11,15 @@ jobs:
   build:
     runs-on: windows-latest        # needs MSVC + CMake to compile the DLLs (preinstalled)
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Build wheel + sdist
         run: |
           python -m pip install --upgrade build
           python -m build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: dist
           path: dist/*
@@ -30,7 +30,7 @@ jobs:
     permissions:
       id-token: write              # required for Trusted Publishing
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: dist
           path: dist
