@@ -4,18 +4,21 @@ A GPU-painted spreadsheet grid for tens of thousands of rows. Only visible cells
 are built, so scroll, select, filter and find stay instant. A GUI-free core
 holds the logic; one Direct2D engine draws it, under a thin Tk or Qt host.
 
+## Layout
+
 ```
-src/                   fastpygrid .py sources (no DLLs live here)
-  core/      model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine)
-    _gpu/        surface.cpp
-    _gridstore/  gridcore.cpp
-  render/    tk.py (tkinter host) · qt.py (PySide6 host)
-CMakeLists.txt  compiles the DLLs (scikit-build-core)
-build.bat    python -m build -> dist/*.whl + *.tar.gz (same as CI/PyPI)
-demos/       demo_gpu_tk.py · demo_gpu_qt.py · _data.py · setup.bat (wheel into demos/.venv)
-scripts/
-  tests/       check_select.py · fuzz_coremodel.py       (need fastpygrid installed)
-  benchmarks/  bench_geometry.py                          (need fastpygrid installed)
+Fast-Python-Grid/
+|-- src/                     # fastpygrid .py sources (no DLLs live here)
+|   |-- core/               # model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine)
+|   |   |-- _gpu/           # surface.cpp
+|   |   `-- _gridstore/     # gridcore.cpp
+|   `-- render/             # tk.py (tkinter host), qt.py (PySide6 host)
+|-- CMakeLists.txt          # compiles the DLLs (scikit-build-core)
+|-- build.bat               # python -m build -> dist/*.whl + *.tar.gz (same as CI/PyPI)
+|-- demos/                  # demo_gpu_tk.py, demo_gpu_qt.py, _data.py, setup.bat (wheel into demos/.venv)
+`-- scripts/
+    |-- tests/              # check_select.py, fuzz_coremodel.py (need fastpygrid installed)
+    `-- benchmarks/         # bench_geometry.py (need fastpygrid installed)
 ```
 
 ![fastpygrid sample grid: headers, frozen columns, per-column filters](docs/screenshot.png)
