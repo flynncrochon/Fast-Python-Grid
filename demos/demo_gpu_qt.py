@@ -28,7 +28,7 @@ SHEETS = [
 def _add_sheet(tabs, title, headers, rows, col_w, scale, lib, **opts):
     """Build one grid (its own model + engine) into a fresh Qt tab page."""
     from PySide6 import QtWidgets
-    from fastpygrid.render.gpu_qt import GpuQtGrid
+    from fastpygrid.render.qt import GpuQtGrid
     from fastpygrid.core.coremodel import make_model
     page = QtWidgets.QWidget()
     lay = QtWidgets.QVBoxLayout(page)

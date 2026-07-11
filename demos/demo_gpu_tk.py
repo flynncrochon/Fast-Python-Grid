@@ -30,7 +30,7 @@ SHEETS = [
 def _add_sheet(nb, title, headers, rows, col_w, scale, lib, **opts):
     """Build one grid (its own model + engine) into a fresh notebook tab."""
     import tkinter as tk
-    from fastpygrid.render.gpu_tk import GpuGrid
+    from fastpygrid.render.tk import GpuGrid
     from fastpygrid.core.coremodel import make_model
     frame = tk.Frame(nb)
     nb.add(frame, text=title)

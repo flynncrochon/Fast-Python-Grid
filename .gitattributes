@@ -1,0 +1,4 @@
+# Normalize all text files to LF; git auto-detects binary.
+* text=auto eol=lf
+*.png binary
+*.bat text eol=crlf

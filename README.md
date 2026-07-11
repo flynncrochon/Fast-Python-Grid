@@ -10,7 +10,7 @@ src/                   fastpygrid .py sources (no DLLs live here)
   core/      model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine)
     _gpu/        surface.cpp
     _gridstore/  gridcore.cpp
-  render/    gpu_tk.py (tkinter host) · gpu_qt.py (PySide6 host)
+  render/    tk.py (tkinter host) · qt.py (PySide6 host)
 CMakeLists.txt  compiles the DLLs (driven by scikit-build-core)
 build.bat    runs `python -m build` -> dist/*.whl + *.tar.gz (the same as CI/PyPI)
 demos/       demo_gpu_tk.py · demo_gpu_qt.py · _data.py · setup.bat (installs the wheel into demos/.venv)
@@ -46,7 +46,7 @@ each cell fill a rect + draw text; for each overlay draw a line/rect/triangle".
 ## Example
 
 ```python
-from fastpygrid.render.gpu_tk import make_sheet         # tkinter host (stdlib only)
+from fastpygrid.render.tk import make_sheet         # tkinter host (stdlib only)
 win = make_sheet(
     ["Ticker", "Company", "Sector", "Price"],
     [["AAPL", "Apple Inc.", "Technology", "189.20"],
@@ -60,7 +60,7 @@ Double-click or type to edit. Enter/Tab commit, Ctrl+Z/Y undo/redo, Ctrl+C/V
 copy/paste, Ctrl+A select-all, Ctrl+F find, ▼ on a header to filter/sort.
 
 ```python
-from fastpygrid.render.gpu_qt import make_sheet          # PySide6 host
+from fastpygrid.render.qt import make_sheet          # PySide6 host
 win = make_sheet(headers, rows, frozen_columns=2)
 win.mainloop()                                          # aliases app.exec()
 ```

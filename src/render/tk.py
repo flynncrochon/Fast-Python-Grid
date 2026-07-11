@@ -3,7 +3,7 @@
 The engine owns all rendering, overlays, scrollbars and input LOGIC and imports
 NO GUI toolkit. This file is the thin Tk adapter: it owns the window, the surface
 frame, the fonts, event translation, clipboard and the context menu, and it
-implements the ~dozen host-adapter methods the engine calls. A Qt host (gpu_qt.py)
+implements the ~dozen host-adapter methods the engine calls. A Qt host (qt.py)
 is the same shape over QWidget -- the engine is reused unchanged.
 """
 import ctypes
@@ -107,7 +107,7 @@ class GpuGrid(tk.Frame):
     def focus(self):
         self.surface.focus_set()
 
-    _CURSORS = {"resize": "sb_h_double_arrow", "hand": "hand2"}
+    _CURSORS = {"resize": "sb_h_double_arrow", "hand": "hand2", "text": "xterm"}
 
     def set_cursor(self, kind):
         self.surface.configure(cursor=self._CURSORS.get(kind, ""))

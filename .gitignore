@@ -17,3 +17,5 @@ demos/fastpygrid/
 
 # python packaging
 *.egg-info/
+
+AGENTS.md
