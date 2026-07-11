@@ -1,20 +1,20 @@
 """Ctrl+F find controller -- GUI-free search/navigation over model.find_matches.
 
-Both the Tk and Qt find bars drive this identical logic; only the surrounding
+Both the Tk and Qt find bars drive this identical logic. Only the surrounding
 widgets differ:
 
   * highlight every matching cell (lazy, via model find-state) + a distinct
-    active-match marker;
+    active-match marker,
   * count reads "i/N" (or "i/N+" when the navigable list was capped, "No results",
-    or "" when the query is empty);
-  * Next/Prev wrap; the FIRST Enter lands on the highlighted nearest match rather
-    than skipping past it;
-  * nearest match is relative to the current cell (row-major >=);
+    or "" when the query is empty),
+  * Next/Prev wrap. The FIRST Enter lands on the highlighted nearest match rather
+    than skipping past it,
+  * nearest match is relative to the current cell (row-major >=),
   * an optional scope (the selection, when it covers more than one cell) confines
-    the search and is KEPT visible while stepping (selection isn't collapsed);
+    the search and is KEPT visible while stepping (selection isn't collapsed),
   * case-sensitivity toggle.
 
-The controller talks to the host grid through a tiny surface it already exposes:
+The controller talks to the host grid through a small surface it already exposes:
 ``.active``/``.anchor``/``.sel``/``.extra`` (selection state), ``.model`` and
 ``.scroll_into_view(r, c)``. Highlight repaints happen via ``model.set_find`` /
 ``model.clear_find`` (which fire the model's change callback -> the grid redraws).

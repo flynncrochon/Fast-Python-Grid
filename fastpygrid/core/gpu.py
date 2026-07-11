@@ -1,17 +1,17 @@
-"""Direct2D/GPU renderer engine (Windows only) -- TOOLKIT-NEUTRAL.
+"""Direct2D/GPU renderer engine (Windows only), TOOLKIT-NEUTRAL.
 
 Blits the core display list (paint()) onto a Direct2D surface driven by a small
 C-ABI DLL (see ../csrc/surface.cpp), loaded via ctypes. The GPU compositor keeps the
-zoomed-out full-rebuild cheap; scrolling just repaints the viewport and Presents.
+zoomed-out full-rebuild cheap. Scrolling just repaints the viewport and Presents.
 
 This module imports NO GUI toolkit. It provides:
-  * GpuEngine -- owns model/geometry/controller, the Gpu surface, and ALL
+  * GpuEngine: owns model/geometry/controller, the Gpu surface, and ALL
     rendering, overlays (editor/dropdown/filter/find), scrollbars and normalized
     input logic. Talks to a `host` adapter for toolkit bits (see the host contract
     on GpuEngine). This makes a Tk host and a Qt host thin, interchangeable wrappers.
-  * GpuCanvas -- the core.render.blit backend that packs each primitive into the
+  * GpuCanvas: the core.render.blit backend that packs each primitive into the
     wire buffer surface.cpp decodes.
-  * TextField -- a custom text-input control (measures via a host callable).
+  * TextField: a custom text-input control (measures via a host callable).
 
 Host adapters live in their own files: fastpygrid.render.tk (Tk) and
 fastpygrid.render.qt (Qt). Use those modules' make_sheet() to launch.
@@ -41,7 +41,7 @@ _PANEL_BG = "#2b2a26"
 _PANEL_FG = "#e8e5dc"
 _PANEL_SUB = "#3a3934"      # input field / row backing on the dark panel
 _PANEL_HI = "#4a463d"       # hovered row / button
-# scrollbars (track + thumb; thumb brightens to the accent on hover/drag)
+# scrollbars (track + thumb, thumb brightens to the accent on hover/drag)
 _SB_TRACK = "#e3e0d6"
 _SB_THUMB = "#b7b1a3"
 _SB_TRACK_DK = "#232220"    # on the dark filter panel
@@ -60,7 +60,7 @@ def _sb_metrics(track_start, track_len, content, view, offset):
 
 
 def _sb_offset(pos, grab, track_start, track_len, tlen, content, view):
-    """New scroll offset from a thumb drag; grab = (press_pos - thumb_start)."""
+    """New scroll offset from a thumb drag. grab = (press_pos - thumb_start)."""
     span = max(1, track_len - tlen)
     return int(round((pos - grab - track_start) / span * (content - view)))
 
@@ -100,7 +100,7 @@ def build():
 
 
 def _col(c):
-    """'#rrggbb' -> 0xRRGGBB int; falsy -> -1 (means 'no fill/outline')."""
+    """'#rrggbb' -> 0xRRGGBB int, falsy -> -1 (means 'no fill/outline')."""
     return int(c[1:], 16) if c else -1
 
 
@@ -111,7 +111,7 @@ def _enable_dpi_awareness():
     Also disables Qt's own HighDPI scaling: the engine works in PHYSICAL px, so Qt
     must report physical coords/sizes (dpr==1) or every click maps toward the origin
     and the surface renders into a 1/dpr corner. These env vars only take effect if
-    set BEFORE QApplication -- both Qt entry points call this right before creating
+    set BEFORE QApplication. Both Qt entry points call this right before creating
     it, so this is the reliable place (module-import timing in render.qt is too late when
     the app is built first, e.g. the demo). No-op for Tk."""
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
@@ -128,8 +128,8 @@ def _enable_dpi_awareness():
 
 def _check_poly(ax, ay, bx, by, cx, cy, h):
     """Outline of a checkmark stroke (centerline a->b->c, half-thickness h) as a
-    filled polygon -- mitered joins, so the bend is clean (a two-line stroke leaves
-    a butt-cap notch at the vertex)."""
+    filled polygon (mitered joins, so the bend is clean, since a two-line stroke
+    leaves a butt-cap notch at the vertex)."""
     def nrm(dx, dy):
         L = math.hypot(dx, dy) or 1.0
         return -dy / L, dx / L                     # left normal, unit
@@ -159,7 +159,7 @@ def _screen_scale(win):
 class GpuCanvas:
     """core.render.blit backend: buffers primitives into the packed wire format
     (see surface.cpp header) instead of drawing directly. The host ships
-    bytes(canvas.buf) to the DLL once per frame -- one native call, not one per
+    bytes(canvas.buf) to the DLL once per frame: one native call, not one per
     primitive (the Python->native boundary is the cost worth avoiding)."""
 
     def __init__(self, fpx, scale=1.0):
@@ -203,7 +203,7 @@ class GpuCanvas:
         self._text(cx - px, cy - px, 2 * px, 2 * px, s, color, float(px), False, True)
 
     def combo(self, x, y, w, h):
-        """Drop button: thin box + filled chevron -- decomposed to rect+poly here so
+        """Drop button: thin box + filled chevron, decomposed to rect+poly here so
         the DLL only needs R/L/P/T (mirrors the Tk/Qt combo drawing)."""
         sz = max(8, round(h) - 8)
         bx, by = x + w - sz - 3, y + (h - sz) / 2
@@ -215,8 +215,8 @@ class GpuCanvas:
 
 
 class TextField:
-    """Custom single-line text input rendered with GpuCanvas primitives -- no Tk
-    widget. The owner feeds it key/mouse events and calls draw() each frame; it
+    """Custom single-line text input rendered with GpuCanvas primitives, no Tk
+    widget. The owner feeds it key/mouse events and calls draw() each frame. It
     owns text, caret, selection, horizontal scroll, and clipboard. Measures widths
     with a `measure` callable the host provides (toolkit-neutral)."""
 
@@ -262,7 +262,7 @@ class TextField:
         self.anchor = self.caret
 
     def handle_key(self, keysym, char, shift, ctrl):
-        """Mutate state; return 'enter'/'esc'/'tab'/'shift-tab' for the owner, else None."""
+        """Mutate state. Return 'enter'/'esc'/'tab'/'shift-tab' for the owner, else None."""
         k = keysym
         if k in ("Return", "KP_Enter"):
             return "enter"
@@ -309,14 +309,14 @@ class TextField:
         return None
 
     def click(self, px_rel, shift=False):
-        """Position the caret from a click; px_rel = pixels from the text's left edge."""
+        """Position the caret from a click. px_rel = pixels from the text's left edge."""
         i = self._index_at(px_rel + self.xscroll)
         self.caret = i
         if not shift:
             self.anchor = i
 
     def select_word(self, px_rel):
-        """Select the word (or whitespace run) under a click -- double-click behavior."""
+        """Select the word (or whitespace run) under a click (double-click behavior)."""
         t = self.text
         if not t:
             self.caret = self.anchor = 0
@@ -357,7 +357,7 @@ class TextField:
 class GpuEngine:
     """Toolkit-NEUTRAL grid engine: owns the model/geometry/controller, the Gpu
     surface, and ALL rendering, overlay (editor/dropdown/filter/find), scrollbar
-    and input LOGIC. Knows nothing about Tk or Qt -- it talks to a `host` adapter
+    and input LOGIC. Knows nothing about Tk or Qt: it talks to a `host` adapter
     for the toolkit-specific bits, so a Tk host and a Qt host are thin wrappers.
 
     Host adapter contract (see TkHost):
@@ -403,7 +403,7 @@ class GpuEngine:
         model.changed = lambda: self._coalesce(self.redraw)
 
     # --- surface lifecycle (lazy: device is created on the first Configure, AFTER
-    # the window maps, so make_sheet() stays instant -- load time is unchanged) --
+    # the window maps, so make_sheet() stays instant, load time is unchanged) --
     def _attach(self):
         if self._lib is None or self._surf is not None:
             return
@@ -456,7 +456,7 @@ class GpuEngine:
     def after_scroll_change(self):   self._coalesce(self.redraw)
     def after_geometry_change(self): self._coalesce(self.redraw)
     def measure(self, text, bold):   return self.host.measure(text, bold)
-    def set_edge_cursor(self, on):   # ctl.on_motion drives this; hand wins over default
+    def set_edge_cursor(self, on):   # ctl.on_motion drives this, hand wins over default
         self._set_cursor("resize" if on else ("hand" if self._arrow else ""))
 
     def _set_cursor(self, kind):     # dedup so we don't re-set every motion (flicker)
@@ -477,7 +477,7 @@ class GpuEngine:
                     and m.cell_choices(row, col) is not None
                     and g.dropdown_btn_hit(x, y, row, col))         # data-cell dropdown ▼
     def clipboard_get(self):
-        # Jira/browser tables ship as an HTML <table>; flatten it here to plain TSV so
+        # Jira/browser tables ship as an HTML <table>, flatten it here to plain TSV so
         # both the Python and C++ models paste it with their existing tab/newline split.
         html = getattr(self.host, "clip_get_html", lambda: "")()   # table flavor, if any
         if html:
@@ -492,7 +492,7 @@ class GpuEngine:
         self._open_filter(col)
 
     # --- custom find bar drawn top-right on the surface (no Tk widget). Modal-ish:
-    # keys route to the query field; Enter=next, Shift+Enter=prev, Esc closes;
+    # keys route to the query field. Enter=next, Shift+Enter=prev, Esc closes,
     # clicking off the bar closes it. Match highlights come from FindController -> the
     # model find-state -> paint(). ---
     def reveal_find(self):
@@ -671,12 +671,12 @@ class GpuEngine:
             ry = cy + i * rh
             hov = ii == f.get("hoverrow")
             cv.rect(x + pad, ry, lw, rh - 1, fill=_PANEL_HI if hov else _PANEL_BG)
-            # checkbox drawn as primitives (not a ☑/☐ glyph -- font fallback rendered
-            # the two states at different sizes). Box is always identical; only the
+            # checkbox drawn as primitives (not a ☑/☐ glyph: font fallback rendered
+            # the two states at different sizes). Box is always identical, only the
             # tick appears. Label x is fixed, so it never shifts on (un)check.
             bs = max(8, rh - round(9 * s))
             bx, by = x + pad + round(3 * s), ry + (rh - bs) // 2
-            # checked: filled accent box + white tick (high contrast); unchecked: dark box
+            # checked: filled accent box + white tick (high contrast). unchecked: dark box
             cv.rect(bx, by, bs, bs, fill=T.ACCENT if checked else _PANEL_SUB,
                     outline=T.ACCENT if checked else _PANEL_FG)
             if checked:                          # crisp mitered tick as one filled poly
@@ -830,7 +830,7 @@ class GpuEngine:
         btn = next((k for k in ("sortA", "sortZ", "sortcolor", "clearsort", "clear",
                                 "filtercolor", "ok", "cancel")
                     if self._in(lo.get(k), x, y)), None)     # button hover
-        # Color submenu: hovering a ▸ item opens (or switches) it; it stays open while
+        # Color submenu: hovering a ▸ item opens (or switches) it. It stays open while
         # the cursor is over the flyout itself, and closes the moment it moves onto any
         # other section of the popup.
         fly, hoverfly = None, None
@@ -913,7 +913,7 @@ class GpuEngine:
         bg, fg = edit_colors(r, self.geom.hdr_rows)      # blend with the cell it edits
         text = initial if initial is not None else self.model.cell(r, c)
         tf = TextField(self._measure, text, clipboard=(self.host.clip_get, self.host.clip_set))
-        # caret at end (set_text default) -- open just begins editing, no select-all
+        # caret at end (set_text default): open just begins editing, no select-all
         self._editor = {"tf": tf, "cell": (r, c), "bg": bg, "fg": fg}
         self.host.focus()
         self.redraw()
@@ -1259,7 +1259,7 @@ class GpuEngine:
             self._editor["tf"].click(x - self.geom.col_x(c) - self._edit_pad(), shift=True)
             self.redraw(); return
         # At an edge the timer owns the scrolling, so the event itself must NOT also
-        # scroll (follow=False) -- else the two compound and race the pointer.
+        # scroll (follow=False), else the two compound and race the pointer.
         at_edge = self.ctl.drag_region is not None and self._edge_scroll(x, y) != (0, 0)
         self._in_drag = True
         try:
@@ -1273,7 +1273,7 @@ class GpuEngine:
             self._stop_autoscroll()
 
     # --- edge autoscroll during a selection drag: a steady, slow timer (NOT one
-    # step per mouse event -- that raced the pointer on a high-poll mouse and flew
+    # step per mouse event, which raced the pointer on a high-poll mouse and flew
     # thousands of rows). It ticks gently and accelerates only the further PAST the
     # edge the pointer is held, so you stay in control near the edge. Extends the
     # selection into the phantom region when uncapped. ---
@@ -1389,7 +1389,7 @@ class GpuEngine:
         self.geom.w, self.geom.h = w - self._sbw, h - self._sbw
         self.redraw()
 
-    # --- scroll (a scroll closes any open dropdown -- it's anchored to a cell) ---
+    # --- scroll (a scroll closes any open dropdown, it's anchored to a cell) ---
     def _scroll_rows(self, dr):
         if self._dropdown:
             self._close_dropdown(redraw=False)

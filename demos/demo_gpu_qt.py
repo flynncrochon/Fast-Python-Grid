@@ -57,13 +57,13 @@ def main():
         _enable_dpi_awareness()
         app = QtWidgets.QApplication([])
     n = rows_arg(sys.argv)
-    data = gen_rows(n)             # generate once; each sheet's model copies it
+    data = gen_rows(n)             # generate once, each sheet's model copies it
     scale = _screen_scale(None)
     # uncapped tabs use a SMALL sheet so the empty repeatable cells are right past
     # the data (with 100k rows you'd never scroll to the phantom region to see them).
     small = data if n <= 30 else gen_rows(30)
     win = QtWidgets.QTabWidget()
-    win.setWindowTitle("fastpygrid (gpu-qt) — sheet options — %s rows" % f"{n:,}")
+    win.setWindowTitle("fastpygrid (gpu-qt): sheet options, %s rows" % f"{n:,}")
     win.resize(round(980 * scale), round(620 * scale))
     for title, opts in SHEETS:
         _add_sheet(win, title, HEADERS, (small if opts else data), COL_W, scale, lib, **opts)

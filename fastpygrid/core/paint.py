@@ -5,7 +5,7 @@ Given the model, geometry, active cell and selection ranges, it returns the
 layout / z-order / colour decision lives here exactly once.
 
     dl.cells    : [(x, y, w, h, text, bg, fg, flags), ...]   back-to-front
-    dl.overlays : chrome drawn AFTER all cells --
+    dl.overlays : chrome drawn AFTER all cells:
         ("line",      x1, y1, x2, y2, color, width)      # frozen-pane divider
         ("vline"|"hline", x1, y1, x2, y2, color, width)  # thick section dividers
         ("ring",      x1, y1, x2, y2)                    # selection-outline edge (SEL_RING, 2px)
@@ -13,9 +13,9 @@ layout / z-order / colour decision lives here exactly once.
         ("tri",       x1, y1, sz, color)                 # corner select-all triangle
         ("dropdown",  x, y, w, h)                         # native drop button at cell's right
 
-Grid rows: 0..H-1 are the pinned header rows (field names on the bottom one;
+Grid rows: 0..H-1 are the pinned header rows (field names on the bottom one,
 rows above it are GROUP bands whose adjacent same-label cells merge into one
-spanning cell); rows H..N are data. Cells are emitted back-to-front (data body,
+spanning cell). Rows H..N are data. Cells are emitted back-to-front (data body,
 gutter, header rows, letter band, corner) so a dumb front-to-back renderer gets
 correct occlusion without a clip region.
 """
@@ -139,7 +139,7 @@ def paint(model, geom, active, ranges, hover_corner=False):
         dl.cells.append((0, y, g.gutter_w, g.row_h, str(gr + 1), bg, T.LETTER_FG, T.FLAG_CENTER))
 
     # header rows (grid rows 0..H-1): pinned, selectable. The BOTTOM row holds
-    # the field names + filter buttons; rows above it are GROUP bands -- adjacent
+    # the field names + filter buttons. Rows above it are GROUP bands, adjacent
     # cells sharing label and fill merge into one spanning, centered cell (a
     # selection wash or per-cell style difference splits the run on its own).
     for hr in range(H):
@@ -152,7 +152,7 @@ def paint(model, geom, active, ranges, hover_corner=False):
                     continue
                 x, cw = g.col_x(c), g.col_width(c)
                 # A header row does NOT act as a column indicator (only the A/B/C
-                # letter band does); it tints only when the cell itself is selected.
+                # letter band does), it tints only when the cell itself is selected.
                 sty = cell_style(hr, c)
                 fg = sty.get("fg", T.FIELD_FG) if sty else T.FIELD_FG
                 base = sty.get("bg") if sty else None         # header is always bold
@@ -226,7 +226,7 @@ def paint(model, geom, active, ranges, hover_corner=False):
         # uncapped cols: extend through the phantom columns to the viewport right edge
         x_end = w if g.uncap_cols else min(w, g.col_x(ncols - 1) + g.col_w[ncols - 1])
         for gr in hl:
-            if gr < H or gr in vis:                         # header rows pinned; data must be visible
+            if gr < H or gr in vis:                         # header rows pinned, data must be visible
                 y = g.row_y(gr) + g.row_h_at(gr)           # bottom edge of row gr
                 dl.overlays.append(("hline", g.gutter_w, y, x_end, y, T.SECTION, T.SECTION_W))
     # corner triangle: selection orange ONLY when the whole sheet is selected

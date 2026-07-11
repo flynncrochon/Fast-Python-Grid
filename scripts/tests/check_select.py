@@ -61,7 +61,7 @@ def main():
                                          occupied_row=lambda r: r in filled, **B)
     assert active[0] == 3, active
 
-    print("check_select OK — 11 selection cases pass")
+    print("check_select OK: 11 selection cases pass")
 
 
 if __name__ == "__main__":

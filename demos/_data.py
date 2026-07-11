@@ -46,7 +46,7 @@ def style_demo(model, lo=None, hi=None):
     """Data-driven per-cell styling so the demos exercise fg / bold / bg:
     Chg% red/green by sign, 'Strong Buy' ratings bold-green, 'watch' notes flagged
     amber. Optional [lo, hi) GRID-row range so stream_styles() can apply it in
-    chunks; defaults to the whole dataset."""
+    chunks. Defaults to the whole dataset."""
     chg, rating, note = HEADERS.index("Chg%"), HEADERS.index("Rating"), HEADERS.index("Note")
     lo = model.header_rows if lo is None else lo
     hi = model._real_rows() if hi is None else hi
@@ -63,7 +63,7 @@ def style_demo(model, lo=None, hi=None):
 def stream_styles(win, chunk=4000):
     """Apply the per-cell style pass in chunks AFTER the first frame, so the grid
     shows instantly and never freezes on load. The first chunk covers the visible
-    rows, so what you see is styled within a frame; the rest streams in behind it."""
+    rows, so what you see is styled within a frame. The rest streams in behind it."""
     m, view = win.model, win.grid_view
     total = m._real_rows()
 

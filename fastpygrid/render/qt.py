@@ -7,16 +7,16 @@ winId), fonts, event translation, clipboard and context menu, and implements the
 ~dozen host-adapter methods the engine calls. The engine is reused UNCHANGED.
 
 All chrome is custom Gpu-drawn, so the widget IS the surface -- no sibling Qt
-widgets. Windows-only (Direct2D); raises if the DLL/GPU surface can't build.
+widgets. Windows-only (Direct2D), raises if the DLL/GPU surface can't build.
 """
 import os
 
 # The engine works in PHYSICAL pixels (HWND is physical, Gpu RT forced to 96 DPI),
 # so Qt must not scale -- else it reports logical px and the surface renders into a
 # 1/dpr corner with every mouse coord offset. AA_DisableHighDpiScaling is a no-op in
-# Qt6; these env vars are the real switch and must be set before QApplication.
+# Qt6. These env vars are the real switch and must be set before QApplication.
 # ponytail: assumes dpr==1. Embedding in a QApplication that forces scaling => coords
-# offset; set QT_ENABLE_HIGHDPI_SCALING=0 in that app's env too.
+# offset. Set QT_ENABLE_HIGHDPI_SCALING=0 in that app's env too.
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
 os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
 
@@ -45,14 +45,14 @@ def _keysym(e):
     if k in _KEYS:
         return _KEYS[k]
     if QtCore.Qt.Key_A <= k <= QtCore.Qt.Key_Z:
-        return chr(k)                      # "A".."Z"; engine lowercases where needed
+        return chr(k)                      # "A".."Z", engine lowercases where needed
     t = e.text()
     return t if t else ""
 
 
 class GpuQtGrid(QtWidgets.QWidget):
     """Thin Qt host for GpuEngine. A native, self-painted surface widget: the Gpu
-    child HWND parents to winId() and does all drawing; Qt just forwards events."""
+    child HWND parents to winId() and does all drawing. Qt just forwards events."""
 
     def __init__(self, parent, model, editable=True, frozen=0, col_w=None, scale=1.0, lib=None,
                  uncap_rows=False, uncap_cols=False):
@@ -229,7 +229,7 @@ def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
             "`python -m fastpygrid.core.gpu --build`.")
     app = QtWidgets.QApplication.instance()
     if app is None:
-        _enable_dpi_awareness()          # process DPI-aware; Qt scaling off via env (top of file)
+        _enable_dpi_awareness()          # process DPI-aware, Qt scaling off via env (top of file)
         app = QtWidgets.QApplication([])
     scale = _screen_scale(None)
     model = make_model(headers, rows, editable=not view_only)

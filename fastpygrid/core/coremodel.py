@@ -1,17 +1,17 @@
-"""CoreModel -- GridModel backed by the C++ arena engine (gridcore.dll).
+"""CoreModel: GridModel backed by the C++ arena engine (gridcore.dll).
 
-Cell text lives in C++; the bulk text paths (copy/delete/paste/find) and undo
+Cell text lives in C++. The bulk text paths (copy/delete/paste/find) and undo
 run there in one ctypes call each, avoiding the millions of Python str objects
 that are the pure-Python floor. Everything else (view/filter/sort orchestration,
 styles, choices, readonly, geometry) stays in Python: those touch one column or
 the visible viewport, where per-cell access is already cheap.
 
 `self._rows` is a thin shim delegating to the engine, so every inherited
-GridModel method keeps working unchanged; only the handful of bulk hot methods
+GridModel method keeps working unchanged. Only the handful of bulk hot methods
 are overridden to call C++ directly.
 
 Scope: data-row mutations. Header rows are read-only through the fast path
-(headers stay Python, as in GridModel); editing a header cell is not routed
+(headers stay Python, as in GridModel). Editing a header cell is not routed
 through this backend. Falls back to GridModel if the DLL is unavailable.
 """
 import ctypes
@@ -130,7 +130,7 @@ class CoreModel(GridModel):
         if data:
             _LIB.gc_load_packed(self._core, _pack(data), len(data))
         self._rows = _CoreRows(self._core)
-        self._init_view_state()                   # _undo holds tagged ops; cell diffs live in C++
+        self._init_view_state()                   # _undo holds tagged ops, cell diffs live in C++
 
     def __del__(self):
         c = getattr(self, "_core", None)
@@ -156,7 +156,7 @@ class CoreModel(GridModel):
             self._distinct.pop(c, None)
 
     def _push_snap(self, rng):
-        # Cell diff lives in the C++ engine; the Python entry carries the view state
+        # Cell diff lives in the C++ engine. The Python entry carries the view state
         # active at this edit + the touched rect (to reselect on undo), tagged to
         # interleave with 'view' ops.
         self._undo.append(("edit", self._filt_snapshot(), rng))
@@ -226,7 +226,7 @@ class CoreModel(GridModel):
         rc, n_rc, rr, n_rr = self._ro_arrays()
         pre = _LIB.gc_ndata(self._core)
         # C++ parses the raw clipboard, fills a 1x1 over a multi-cell selection,
-        # and returns the block dims -- no Python split/scan.
+        # and returns the block dims, no Python split/scan.
         payload = text.encode("utf-8")
         dims = (ctypes.c_int * 2)()
         changed = _LIB.gc_paste(self._core, d_start, start_col, payload, len(payload),
@@ -280,7 +280,7 @@ class CoreModel(GridModel):
 
     def grow_cols(self, new_w):
         """Widen the sheet to `new_w` columns (editing past the last column, uncapped).
-        The C++ core re-strides its buffer; headers gain blank trailing cells. No-op
+        The C++ core re-strides its buffer, headers gain blank trailing cells. No-op
         if it already has that many. New columns start blank and are fully editable."""
         if new_w <= self._w:
             return
@@ -293,7 +293,7 @@ class CoreModel(GridModel):
         self.changed()
 
     def _replay_edit(self, entry, use_new):
-        # base undo()/redo() dispatch 'view' vs 'edit'; a cell edit drives the C++ stack.
+        # base undo()/redo() dispatch 'view' vs 'edit', a cell edit drives the C++ stack.
         tgt = (ctypes.c_int * 2)()
         fn = _LIB.gc_redo if use_new else _LIB.gc_undo
         if not fn(self._core, tgt):
