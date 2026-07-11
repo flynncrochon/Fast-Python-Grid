@@ -7,8 +7,6 @@ selectable, pinned rows, so a click/copy/find treats them as just more rows.
 Data index ``di = gr - H`` maps through ``_src_data`` to a source row in
 ``self._rows``.
 """
-import csv
-from io import StringIO
 from html.parser import HTMLParser
 
 from .selection import normalize as _norm_ranges
@@ -485,72 +483,6 @@ class GridModel:
     # --- find (GRID rows, header included) ----------------------------
     FIND_LIMIT = 100_000
 
-    def find_matches(self, query, case=False, scope=None):
-        """(cells, capped) -- up to FIND_LIMIT (row, col) whose text contains
-        ``query``. ``scope`` is a list of (r1,c1,r2,c2) rects or None."""
-        if not query:
-            self._find_cache = None
-            return [], False
-        needle = query if case else query.lower()
-        nr, nc = self._real_rows(), self._w
-        out = []
-        ap = out.append
-        # Incremental refine (the typing path): contains-search is monotonic, so
-        # matches(q2) ⊆ matches(q1) when q1 is a prefix of q2. If the last COMPLETE
-        # scan shared case+scope and this needle extends it, re-test only those
-        # matches instead of rescanning millions of cells. Cache is dropped on any
-        # edit (_write/_write_src) and any view change (_rebuild).
-        cache = self._find_cache
-        if cache is not None and cache[1] == case and cache[2] == scope \
-                and needle.startswith(cache[0]):
-            cell = self.cell
-            for rc in cache[3]:
-                v = cell(*rc)
-                if v and needle in (v if case else v.lower()):
-                    ap(rc)
-            self._find_cache = (needle, case, scope, out)
-            return out, False
-        nlen = len(needle)
-        if scope:
-            seen = set()
-            for (r1, c1, r2, c2) in scope:
-                r1, r2 = max(0, min(nr - 1, r1)), max(0, min(nr - 1, r2))
-                c1, c2 = max(0, min(nc - 1, c1)), max(0, min(nc - 1, c2))
-                for row in range(r1, r2 + 1):
-                    for col in range(c1, c2 + 1):
-                        if (row, col) in seen:
-                            continue
-                        seen.add((row, col))
-                        v = self.cell(row, col)
-                        if v and needle in (v if case else v.lower()):
-                            out.append((row, col))
-            out.sort()
-            if len(out) > self.FIND_LIMIT:
-                return out[:self.FIND_LIMIT], True
-            self._find_cache = (needle, case, scope, out)
-            return out, False
-        # Full scan: walk the backing rows directly (no per-cell cell() indirection).
-        H = self._hdr
-        plain = self._is_plain()
-        src, view = self._rows, self._view
-        ndata = len(src) if plain else len(view)
-        for gr in range(H):                                    # pinned header rows
-            row = self._headers[gr]
-            for col in range(nc):
-                v = row[col]
-                if len(v) >= nlen and needle in (v if case else v.lower()):
-                    ap((gr, col))
-        for di in range(ndata):                                # data rows
-            row = src[di] if plain else src[view[di]]
-            gr = di + H
-            for col in range(nc):
-                v = row[col]
-                if len(v) >= nlen and needle in (v if case else v.lower()):
-                    ap((gr, col))
-                    if len(out) >= self.FIND_LIMIT:
-                        return out, True
-        self._find_cache = (needle, case, scope, out)
-        return out, False
 
     def set_find(self, needle, case, scope, active):
         self._find_needle = (needle if case else needle.lower()) if needle else ""
@@ -588,25 +520,6 @@ class GridModel:
     def _grid_to_src(self, gr):
         return -1 - gr if gr < self._hdr else self._src_data(gr - self._hdr)
 
-    def _push_edit(self, changes, target, pre_len):
-        self._undo.append(("edit", changes, self._filt_snapshot(), target, pre_len))
-        del self._undo[:-200]
-        self._redo.clear()
-
-    def _write_src(self, src, col, val):
-        """Replay a recorded write straight to its SOURCE cell (no view mapping),
-        materialising a blank row if the edit had grown the grid."""
-        if src < 0:                        # header row: src -1 -> row 0, -2 -> row 1, …
-            self._headers[-1 - src][col] = val
-        else:
-            if src >= len(self._rows):
-                if not val:
-                    return
-                self._materialize(src)
-            self._rows[src][col] = val
-        self._distinct.pop(col, None)
-        self._find_cache = None
-        self._used = None
 
     def _clamp_target(self, rng):
         # rng is a view rect (r1,c1,r2,c2) -- the cells an undo/redo touched, so the
@@ -628,19 +541,6 @@ class GridModel:
         self._rebuild()
         self._committed_filt = self._filt_snapshot()
 
-    def _replay_edit(self, entry, use_new):
-        """Apply/revert a cell-diff entry, returns the cell to reselect. CoreModel
-        overrides this to drive the C++ undo stack instead of the Python diff log."""
-        _kind, changes, filt, target, pre_len = entry
-        for src, col, old, new in (changes if use_new else reversed(changes)):
-            self._write_src(src, col, new if use_new else old)
-        if not use_new:
-            del self._rows[pre_len:]                 # drop rows the edit materialised
-        self._install_filt(filt)
-        if self.on_edit:
-            self.on_edit()
-        self.changed()
-        return self._clamp_target(target)
 
     def _apply_entry(self, entry, use_new):
         if entry[0] == "view":                       # filter/sort change: no cell to select
@@ -662,332 +562,37 @@ class GridModel:
             self._undo.append(entry)
             return self._apply_entry(entry, use_new=True)
 
-    def _materialize(self, r):
-        while len(self._rows) <= r:
-            self._rows.append([""] * self._w)
-
-    def grow_cols(self, new_w):
-        """Widen the sheet to `new_w` columns (editing past the last column, uncapped):
-        every row + header gains blank trailing cells. No-op if already that wide.
-        New columns start blank and are fully editable."""
-        if new_w <= self._w:
-            return
-        add = new_w - self._w
-        for hrow in self._headers:
-            hrow += [""] * (new_w - len(hrow))
-        for r in self._rows:
-            r += [""] * add
-        self._w = new_w
-        self._distinct.clear()
-        self._used = None
-        self.changed()
-
-    def _write(self, gr, col, text):
-        """Write one GRID cell (no undo/signals). Returns True if it changed."""
-        if gr < self._hdr:
-            if self._headers[gr][col] == text:
-                return False
-            self._headers[gr][col] = text
-            return True
-        r = self._src_data(gr - self._hdr)
-        if r >= len(self._rows):
-            if not text.strip():
-                return False
-            self._materialize(r)
-        if self._rows[r][col] == text:
-            return False
-        self._rows[r][col] = text
-        self._distinct.pop(col, None)      # this column's distinct set changed
-        self._find_cache = None            # cell text changed -> find cache stale
-        self._used = None                  # ...and used-range (scrollbar) snapshot
-        return True
 
     def _rebuilds_on_edit(self, gr, col):
         return gr >= self._hdr and (col in self._filters or col in self._text_filters
                             or (self._sort is not None and self._sort[0] == col))
 
-    def set_cell(self, gr, col, text):
-        if not self.editable or col in self._readonly or self.row_readonly(gr) \
-                or not (0 <= col < self._w):
-            return False
-        text = str(text)
-        old = self.cell(gr, col)
-        if old == text:
-            return False
-        pre_len = len(self._rows)
-        src = self._grid_to_src(gr)
-        self._write(gr, col, text)
-        if len(self._rows) > pre_len:                # materialised a row -> every other
-            self._distinct.clear()                   # column gained a blank cell
-        self._push_edit([(src, col, old, text)], (gr, col, gr, col), pre_len)
-        if self._rebuilds_on_edit(gr, col):
-            self._rebuild()
-        if self.on_edit:
-            self.on_edit()
-        self.changed()
-        return True
 
-    def _backing_row(self, gr, plain, view, n):
-        """(src_key, row_list) for grid row `gr`, or (None, None) for a blank
-        pad row. src_key is the undo-log source id (-1-gr for a header row).
-        Resolves the view mapping ONCE so bulk copy/delete index columns
-        directly instead of paying per-cell cell() indirection."""
-        if gr < self._hdr:
-            return -1 - gr, self._headers[gr]
-        di = gr - self._hdr
-        r = di if plain else (view[di] if di < len(view) else -1)
-        return (r, self._rows[r]) if 0 <= r < n else (None, None)
+if __name__ == "__main__":   # headless check of GridModel view/style state (editing lives in CoreModel now)
+    m = GridModel(["A", "B"], [["x", "p"], ["y", "q"], ["x", "r"], ["z", "s"]])
 
-    def delete_selection(self, ranges):
-        if not self.editable:
-            return False
-        pre_len = len(self._rows)
-        changes, box, touched = [], None, set()
-        plain, view, n = self._is_plain(), self._view, len(self._rows)
-        ro_rows, ro_cols = self._readonly_rows, self._readonly
-        for r1, c1, r2, c2 in _norm_ranges(ranges):
-            cols = [c for c in range(max(0, c1), min(self._w, c2 + 1)) if c not in ro_cols]
-            touched.update(cols)                     # per-column, not per-cell
-            for gr in range(max(0, r1), r2 + 1):
-                sr, row = self._backing_row(gr, plain, view, n)
-                if row is None or (ro_rows and sr in ro_rows):
-                    continue
-                for col in cols:
-                    old = row[col]
-                    if old:
-                        box = (_grow(box, gr, col))  # rect of cleared cells -> reselect on undo
-                        changes.append((sr, col, old, ""))
-                        row[col] = ""
-        if changes:
-            for col in touched:                      # caches invalidated once, not per cell
-                self._distinct.pop(col, None)
-            self._find_cache = None
-            self._used = None
-            self._push_edit(changes, box, pre_len)
-            if not plain:
-                self._rebuild()
-            if self.on_edit:
-                self.on_edit()
-            self.changed()
-        return bool(changes)
+    # filter/sort commit as undoable "view" entries (no cell diff)
+    m.set_filter(0, {"x"}); assert m.has_filter(0)
+    assert m.undo() is None and not m.has_filter(0)      # reverted, no cell jump
+    assert m.redo() is None and m.has_filter(0)
+    m.clear_filters()
+    m.set_sort(0, ascending=True); assert m.has_sort(0)
+    m.undo(); assert not m.has_sort(0)
 
-    def selection_text(self, ranges):
-        rs = _norm_ranges(ranges)
-        if not rs:
-            return ""
-        r1 = max(0, min(r[0] for r in rs)); c1 = max(0, min(r[1] for r in rs))
-        r2 = max(r[2] for r in rs); c2 = min(self._w - 1, max(r[3] for r in rs))
-        plain, view, n = self._is_plain(), self._view, len(self._rows)
-        blank = "\t".join([""] * (c2 - c1 + 1))
-        out = []
-        for gr in range(r1, r2 + 1):
-            _sr, row = self._backing_row(gr, plain, view, n)
-            out.append(blank if row is None
-                       else "\t".join(map(_clean, row[c1:c2 + 1])))
-        return "\n".join(out)
-
-    @staticmethod
-    def _parse_clip(text):
-        if not text:
-            return []
-        # Jira/Confluence/browser tables land on the clipboard as an HTML <table>
-        # (the rich form). their plain-text flavor collapses each cell onto its
-        # own line and is unrecoverable. Prefer the table when the host handed it over.
-        head = text[:64].lstrip().lower()
-        if head[:8] == "version:" or head[:1] == "<":   # CF_HTML header or raw HTML
-            rows = _parse_html_table(text)
-            if rows:
-                while rows and not any(c.strip() for c in rows[-1]):
-                    rows.pop()
-                return rows
-        # default reader dialect handles commas + quoting, tab data swaps the delimiter
-        reader = csv.reader(StringIO(text), delimiter="\t") if "\t" in text else csv.reader(StringIO(text))
-        rows = list(reader)
-        while rows and not any(c.strip() for c in rows[-1]):
-            rows.pop()
-        return rows
-
-    def paste_text(self, text, ranges, active):
-        if not self.editable:
-            return None
-        block = self._parse_clip(text)
-        if not block:
-            return None
-        rs = _norm_ranges(ranges)
-        if rs:
-            start_gr = min(r[0] for r in rs); start_col = min(r[1] for r in rs)
-            sel_r2 = max(r[2] for r in rs); sel_c2 = max(r[3] for r in rs)
-        else:
-            start_gr, start_col = active
-            sel_r2, sel_c2 = active
-        # single clipboard cell over a multi-cell selection fills the block
-        if len(block) == 1 and len(block[0]) == 1 and (sel_r2 > start_gr or sel_c2 > start_col):
-            v = block[0][0]
-            block = [[v] * (sel_c2 - start_col + 1) for _ in range(sel_r2 - start_gr + 1)]
-        pre_len = len(self._rows)
-        W, H, plain = self._w, self._hdr, self._is_plain()
-        view, ro_rows, ro_cols = self._view, self._readonly_rows, self._readonly
-        maxw = max(len(b) for b in block)
-        touched = [c for c in range(start_col, start_col + maxw)
-                   if 0 <= c < W and c not in ro_cols]      # per-column, not per-cell
-        changes = []
-        for roff, brow in enumerate(block):
-            gr = start_gr + roff
-            if gr < H:
-                sr, row = -1 - gr, self._headers[gr]
-            else:
-                di = gr - H
-                r = di if plain else (view[di] if di < len(view) else -1)
-                if r < 0:
-                    continue
-                if ro_rows and r in ro_rows:         # readonly row -> skip BEFORE materialising
-                    continue                         # (else we'd grow a row we never write)
-                if r >= len(self._rows):             # writing into the blank pad
-                    if not any(v.strip() and 0 <= start_col + i < self._w
-                               and start_col + i not in self._readonly
-                               for i, v in enumerate(brow)):
-                        continue                     # nothing lands in a writable cell
-                    self._materialize(r)
-                sr, row = r, self._rows[r]
-            if gr < H and ro_rows and sr in ro_rows:   # header-row readonly
-                continue
-            for coff, val in enumerate(brow):
-                col = start_col + coff
-                if 0 <= col < W and col not in ro_cols:
-                    old = row[col]
-                    if old != val:
-                        row[col] = val
-                        changes.append((sr, col, old, val))
-        if changes:
-            if len(self._rows) > pre_len:            # materialised rows -> every column
-                self._distinct.clear()               # gained a blank cell
-            else:
-                for col in touched:                  # caches invalidated once, not per cell
-                    self._distinct.pop(col, None)
-            self._find_cache = None
-            self._used = None
-            end_gr = start_gr + len(block) - 1
-            end_col = start_col + maxw - 1
-            self._push_edit(changes, (start_gr, start_col, end_gr, end_col), pre_len)
-        if not plain:
-            self._rebuild()
-        if self.on_edit:
-            self.on_edit()
-        self.changed()
-        end_gr = start_gr + len(block) - 1
-        end_col = start_col + maxw - 1
-        return (start_gr, start_col, min(end_gr, self.nrows() - 1),
-                min(end_col, self._w - 1))
-
-
-if __name__ == "__main__":   # headless check of diff-based undo/redo
-    m = GridModel(["A", "B"], [["a1", "b1"], ["a2", "b2"]])
-
-    m.set_cell(1, 0, "X")                       # edit existing cell
-    assert m.cell(1, 0) == "X"
-    assert m.undo() == (1, 0, 1, 0) and m.cell(1, 0) == "a1"
-    assert m.redo() == (1, 0, 1, 0) and m.cell(1, 0) == "X"
-    m.undo()
-
-    n0 = m.nrows()                              # edit into the blank pad -> grows rows
-    m.set_cell(6, 1, "deep")
-    assert m.cell(6, 1) == "deep" and m.nrows() > n0
-    m.undo()
-    assert m.cell(6, 1) == "" and m.nrows() == n0   # materialised row dropped
-
-    m.paste_text("p\tq\nr\ts", [(1, 0, 1, 0)], (1, 0))
-    assert (m.cell(1, 0), m.cell(2, 1)) == ("p", "s")
-    m.undo()
-    assert (m.cell(1, 0), m.cell(2, 1)) == ("a1", "b2")
-
-    # Jira/browser HTML-table paste (CF_HTML header + ragged rows) -> proper grid
-    cf_html = ('Version:1.0\r\nStartHTML:00000097\r\n'
-               '<html><body><!--StartFragment-->'
-               '<table><tr><th>Product</th><th>Qty</th></tr>'
-               '<tr><td>abc 665mg</td><td>96</td></tr>'
-               '<tr><td>323232</td></tr></table>'
-               '<!--EndFragment--></body></html>')
-    assert GridModel._parse_clip(cf_html) == [["Product", "Qty"],
-                                              ["abc 665mg", "96"],
-                                              ["323232", ""]]
-    m.paste_text(cf_html, [(1, 0, 1, 0)], (1, 0))
-    assert (m.cell(1, 0), m.cell(1, 1), m.cell(2, 0)) == ("Product", "Qty", "abc 665mg")
-    m.undo()
-
-    m.delete_selection([(1, 0, 2, 1)])
-    assert m.cell(1, 0) == "" and m.cell(2, 1) == ""
-    assert m.undo() == (1, 0, 2, 1) and m.cell(2, 1) == "b2"   # reselect the cleared rect
-
-    assert m.cell_choices(1, 0) is None            # plain cell -> no dropdown
+    # per-cell dropdown choices (identical option lists are interned)
+    assert m.cell_choices(1, 0) is None
     m.set_cell_choices(1, 0, ["x", "y", "z"])
-    assert m.cell_choices(1, 0) == ("x", "y", "z")
-    assert m.dropdown_cols() == {0}
-    m.set_cell_choices(1, 1, ["x", "y", "z"])      # identical options -> shared object (interned)
-    assert m.cell_choices(1, 1) is m.cell_choices(1, 0)
+    assert m.cell_choices(1, 0) == ("x", "y", "z") and m.dropdown_cols() == {0}
+    m.set_cell_choices(1, 1, ["x", "y", "z"])
+    assert m.cell_choices(1, 1) is m.cell_choices(1, 0)  # shared object
     m.set_cell_choices(1, 0, None)
     assert m.cell_choices(1, 0) is None and m.dropdown_cols() == {1}
 
+    # grid lines + readonly flags
     assert m.vlines() == set() and m.hlines() == set()
     m.set_vline(0); m.set_hline(1)
     assert m.vlines() == {0} and m.hlines() == {1}
-    m.set_vline(0, on=False)
-    assert m.vlines() == set()
-
-    m.set_readonly_col(0)                           # lock column 0
-    assert m.col_readonly(0) and not m.set_cell(1, 0, "nope") and m.cell(1, 0) == "a1"
-    m.delete_selection([(1, 0, 1, 1)])              # delete skips the locked col, clears col 1
-    assert m.cell(1, 0) == "a1" and m.cell(1, 1) == ""
-    m.paste_text("X\tY", [(2, 0, 2, 0)], (2, 0))    # paste skips col 0, writes col 1
-    assert m.cell(2, 0) == "a2" and m.cell(2, 1) == "Y"
-    m.set_readonly_col(0, on=False)
-    assert m.set_cell(1, 0, "now") and m.cell(1, 0) == "now"
-
-    m.set_readonly_row(2)                           # freeze row 2 (source-keyed)
-    assert m.row_readonly(2) and not m.set_cell(2, 1, "nope") and m.cell(2, 1) == "Y"
-    m.set_sort(0, ascending=False)                  # lock follows the row through sort
-    gr = next(g for g in range(m._hdr, m.nrows()) if m.cell(g, 0) == "a2")
-    assert m.row_readonly(gr) and not m.set_cell(gr, 1, "nope")
-    m.clear_filters()
-    m.set_readonly_row(2, on=False)
-    assert m.set_cell(2, 1, "yes") and m.cell(2, 1) == "yes"
-
-    # find: incremental refine (typing) must match a from-scratch scan, and an
-    # edit must invalidate the cache so stale coords never survive.
-    fm = GridModel(["Name", "City"],
-                   [["Alice", "Amsterdam"], ["Alan", "Berlin"], ["Bob", "Boston"]])
-    assert fm.find_matches("a")[0] == fm.find_matches("a")[0]     # header "Name" + data
-    step = fm.find_matches("al")                                  # refines the cached "a" set
-    assert step == (GridModel(["Name", "City"],
-                    [["Alice", "Amsterdam"], ["Alan", "Berlin"], ["Bob", "Boston"]])
-                    .find_matches("al")), step                    # == fresh full scan
-    fm.find_matches("ala")
-    fm.set_cell(1, 0, "Zoe")                                      # Alice -> Zoe: invalidates
-    assert fm.find_matches("alice") == ([], False)               # gone, no stale hit
-
-    # filter/sort is undoable like an edit, interleaved with cell edits
-    fu = GridModel(["A"], [["x"], ["y"], ["x"]])
-    fu.set_filter(0, {"x"})
-    assert fu.has_filter(0)
-    assert fu.undo() is None and not fu.has_filter(0)            # filter reverted, no cell jump
-    assert fu.redo() is None and fu.has_filter(0)
-    fu.set_cell(fu.header_rows, 0, "EDIT")                        # new edit clears the redo branch
-    fu.set_sort(0, ascending=True)                               # sort on top of the edit
-    assert fu.has_sort(0)
-    fu.undo(); assert not fu.has_sort(0)                         # undo the sort only
-    H = fu.header_rows
-    assert fu.undo() == (H, 0, H, 0)                             # then undo the edit -> its cell
-    # used_extent snaps back after overscroll edit+delete (the scrollbar-thumb fix):
-    # editing far out grows the used range, clearing it returns to the real content.
-    ue = GridModel(["A", "B"], [["a1", "b1"], ["a2", "b2"]])
-    base = ue.used_extent()
-    ue.set_cell(500, 1, "x")                        # materialise ~500 blank rows
-    assert ue.used_extent()[0] > base[0]
-    ue.set_cell(500, 1, "")                         # clear it -> rows snap back
-    assert ue.used_extent() == base, ue.used_extent()
-    ue.grow_cols(50); ue.set_cell(1, 40, "z")       # content out at column 40
-    assert ue.used_extent()[1] == 41
-    ue.set_cell(1, 40, "")                          # clear it -> columns snap back to the 2 real ones
-    assert ue.used_extent()[1] == 2, ue.used_extent()
-    ue.delete_selection([(1, 40, 1, 40)]) or None   # delete-path also invalidates the cache
-    assert ue.used_extent()[1] == 2
+    m.set_vline(0, on=False); assert m.vlines() == set()
+    m.set_readonly_col(0); assert m.col_readonly(0)
+    m.set_readonly_col(0, on=False); assert not m.col_readonly(0)
     print("model self-check ok")

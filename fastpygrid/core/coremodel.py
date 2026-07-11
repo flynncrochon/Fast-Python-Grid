@@ -12,7 +12,7 @@ are overridden to call C++ directly.
 
 Scope: data-row mutations. Header rows are read-only through the fast path
 (headers stay Python, as in GridModel). Editing a header cell is not routed
-through this backend. Falls back to GridModel if the DLL is unavailable.
+through this backend. Requires the DLL, make_model() raises without it.
 """
 import ctypes
 import os
@@ -74,10 +74,13 @@ def _pack(rows):
 
 
 def make_model(headers, rows, editable=True, on_edit=None):
-    """CoreModel (C++ backend) when gridcore.dll is available, else the pure
-    Python GridModel. Drop-in: identical public API."""
-    cls = CoreModel if _LIB else GridModel
-    return cls(headers, rows, editable=editable, on_edit=on_edit)
+    """CoreModel, backed by the C++ arena engine. Raises if gridcore.dll is
+    missing rather than silently degrading to pure-Python GridModel."""
+    if not _LIB:
+        raise RuntimeError(
+            "gridcore.dll unavailable, build it with "
+            "`python -m fastpygrid.core.gpu --build`.")
+    return CoreModel(headers, rows, editable=editable, on_edit=on_edit)
 
 
 class _CoreRow:

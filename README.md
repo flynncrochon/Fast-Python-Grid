@@ -164,7 +164,6 @@ demos\demo.bat tk                                        # tkinter host, 100k ro
 demos\demo.bat qt                                        # Qt host, same data
 demos\demo.bat tk --rows 500000                          # stress it
 demos\.venv\Scripts\python scripts/tests/check_select.py # selection-state-machine check
-demos\.venv\Scripts\python scripts/tests/fuzz_coremodel.py  # C++ data core vs oracle
 ```
 
 ## Layout
@@ -180,6 +179,6 @@ Fast-Python-Grid/
 |-- build.bat               # python -m build -> dist/*.whl + *.tar.gz (same as CI/PyPI)
 |-- demos/                  # demo_gpu_tk.py, demo_gpu_qt.py, _data.py, setup.bat (wheel into demos/.venv)
 `-- scripts/
-    |-- tests/              # check_select.py, fuzz_coremodel.py (need fastpygrid installed)
+    |-- tests/              # check_select.py (needs fastpygrid installed)
     `-- benchmarks/         # bench_geometry.py (need fastpygrid installed)
 ```
