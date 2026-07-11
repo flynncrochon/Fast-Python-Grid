@@ -8,7 +8,7 @@ holds the logic; one Direct2D engine draws it, under a thin Tk or Qt host.
 
 ```
 Fast-Python-Grid/
-|-- src/                     # fastpygrid .py sources (no DLLs live here)
+|-- src/                    # fastpygrid .py sources (no DLLs live here)
 |   |-- core/               # model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine)
 |   |   |-- _gpu/           # surface.cpp
 |   |   `-- _gridstore/     # gridcore.cpp
