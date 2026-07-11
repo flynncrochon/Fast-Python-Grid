@@ -1,4 +1,3 @@
-# fastgrid runtime dependencies
-# The Tk renderer uses only the standard library (tkinter).
-# PySide6 is required for the Qt renderer and the example apps.
-PySide6
+# fastgrid runtime dependencies: none. The Tk host is standard library only
+# (tkinter) and the renderer DLLs ship prebuilt in the repo.
+# The optional Qt host (fastgrid.render.gpu_qt) needs:  pip install PySide6

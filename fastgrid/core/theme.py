@@ -22,7 +22,10 @@ SEL_HDR = "#635850"     # selected header/gutter highlight
 ACCENT = "#c2734d"
 SEL_TINT = "#d6d5d1"    # multi-cell selection wash (single cell = no fill)
 SEL_RING = "#e07b45"    # selection border
+EDIT_SEL = "#f0c8b0"    # in-cell editor text-selection wash (light, keeps black text readable)
 DIVIDER = "#000000"     # frozen-pane divider
+SECTION = "#000000"     # thick section divider (set_vline / set_hline)
+SECTION_W = 2           # its stroke width in px (DPI-scaled by the renderer)
 
 # --- find --------------------------------------------------------------
 FIND_MATCH = "#fef08a"  # pale-yellow match

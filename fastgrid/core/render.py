@@ -1,10 +1,9 @@
 """blit(display_list, canvas) -- the toolkit-neutral draw walk.
 
 paint.py decides WHAT the frame looks like (a display list of pure data); this
-walks that list and issues primitive draw calls. A renderer supplies only a tiny
-``canvas`` backend -- the OpenGL-vs-Vulkan seam. Everything about layout, z-order
-and the funnel/arrow decomposition lives here, so a backend is literally "here's
-how I draw a rect / text / line / polygon / glyph":
+walks that list and issues primitive draw calls against a ``canvas`` (GpuCanvas).
+Layout, z-order and the funnel/arrow decomposition live here; the canvas is just
+"here's how I draw a rect / text / line / polygon / glyph":
 
     canvas.rect(x, y, w, h, fill=None, outline=None, width=1)
     canvas.text(x, y, w, h, s, color, bold=False, center=False)   # clipped to w
@@ -16,22 +15,22 @@ from . import theme as T
 
 
 def blit(dl, cv):
-    # Grid lines are the 1px gaps between inset cell fills over a single
-    # grid-colour backing rect -- one fill per cell instead of a stroked outline
-    # per cell. Stroking hundreds of tiny rects dominated the frame (~4x faster
-    # in Qt, lighter in Tk) for a pixel-identical result. Cells tile [0,0]..(x1,y1)
-    # gaplessly, so the backing shows through only on each cell's right/bottom edge.
+    # Grid lines are the 1px gaps between inset cell fills over a single grid-colour
+    # backing rect -- one fill per cell, no per-cell stroke (~4x faster in Qt,
+    # pixel-identical). Cells tile gaplessly; the backing shows only at each right/bottom edge.
     if dl.cells:
+        x0 = min(c[0] for c in dl.cells)
+        y0 = min(c[1] for c in dl.cells)
         x1 = max(c[0] + c[2] for c in dl.cells)
         y1 = max(c[1] + c[3] for c in dl.cells)
-        cv.rect(0, 0, x1, y1, fill=T.GRID)
+        cv.rect(x0, y0, x1 - x0, y1 - y0, fill=T.GRID)
     for (x, y, w, h, text, bg, fg, flags) in dl.cells:
         cv.rect(x, y, w - 1, h - 1, fill=bg)
         if text:
             cv.text(x, y, w, h, text, fg, bool(flags & T.FLAG_BOLD), bool(flags & T.FLAG_CENTER))
     for ov in dl.overlays:
         k = ov[0]
-        if k == "line":
+        if k == "line" or k == "vline" or k == "hline":
             cv.line(ov[1], ov[2], ov[3], ov[4], ov[5], ov[6])
         elif k == "ring":                              # selection-outline edge
             cv.line(ov[1], ov[2], ov[3], ov[4], T.SEL_RING, 2)
@@ -40,6 +39,8 @@ def blit(dl, cv):
             cv.poly([(x1 - sz, y1), (x1, y1 - sz), (x1, y1)], col)
         elif k == "filterbtn":
             _filter_btn(cv, *ov[1:])
+        elif k == "dropdown":                          # native drop button at the cell's right
+            cv.combo(ov[1], ov[2], ov[3], ov[4])
 
 
 def _filter_btn(cv, bx, by, sz, state):

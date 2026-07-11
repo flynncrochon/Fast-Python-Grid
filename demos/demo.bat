@@ -1,16 +1,17 @@
 @echo off
-REM Launch the fastgrid Tk or Qt demo using the project's .venv (Python 3.10).
+REM Launch the fastgrid Tk or Qt GPU demo using the project's .venv (Python 3.10).
 REM Usage:  demo.bat            -> prompts for tk or qt
 REM         demo.bat qt         -> runs the Qt (PySide6) demo
 REM         demo.bat tk         -> runs the Tk demo
 REM         demo.bat qt --rows 500000   -> extra args pass through to the demo
 
 setlocal
-set "ROOT=%~dp0"
+REM This bat lives in demos/, so ROOT is its parent (the repo root).
+for %%I in ("%~dp0..") do set "ROOT=%%~fI\"
 set "PY=%ROOT%.venv\Scripts\python.exe"
 
 if not exist "%PY%" (
-    echo [demo] .venv not found. Create it with:  py -3.10 -m venv .venv ^&^& .venv\Scripts\pip install -r requirements.txt
+    echo [demo] .venv not found. Create it with:  py -3.10 -m venv .venv   (Qt demo also needs: .venv\Scripts\pip install PySide6)
     exit /b 1
 )
 
@@ -37,7 +38,6 @@ shift
 goto collect
 
 :launch
-set "PYTHONPATH=%ROOT%;%ROOT%scripts"
 echo [demo] Launching %TARGET% demo...
-"%PY%" "%ROOT%scripts\demo_%TARGET%.py"%REST%
+"%PY%" "%ROOT%demos\demo_gpu_%TARGET%.py"%REST%
 exit /b %errorlevel%
