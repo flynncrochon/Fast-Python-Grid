@@ -22,7 +22,6 @@ os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..core import theme as T
 from ..core.coremodel import make_model
 from ..core.gpu import GpuEngine, _load_lib, _enable_dpi_awareness, _screen_scale
 
