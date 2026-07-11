@@ -1,22 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 256" fill="none">
   <title>Fast Python Grid</title>
-  <!-- grid mark: a 3x3 grid with one orange "active" cell -->
+  <style>
+    .ink   { fill: #1F2328; }
+    .frame { stroke: #1F2328; }
+    .lines { stroke: #9AA0A8; }
+    @media (prefers-color-scheme: dark) {
+      .ink   { fill: #FFFFFF; }
+      .frame { stroke: #FFFFFF; }
+    }
+  </style>
   <defs>
     <clipPath id="round"><rect x="48" y="48" width="160" height="160" rx="26"/></clipPath>
   </defs>
   <g clip-path="url(#round)">
     <rect x="48" y="48" width="53.33" height="53.33" fill="#E8632B"/>
-    <g stroke="#9AA0A8" stroke-width="7" stroke-linecap="round">
+    <g class="lines" stroke-width="7" stroke-linecap="round">
       <line x1="101.33" y1="48" x2="101.33" y2="208"/>
       <line x1="154.67" y1="48" x2="154.67" y2="208"/>
       <line x1="48" y1="101.33" x2="208" y2="101.33"/>
       <line x1="48" y1="154.67" x2="208" y2="154.67"/>
     </g>
   </g>
-  <rect x="48" y="48" width="160" height="160" rx="26" stroke="#70757C" stroke-width="9"/>
-  <!-- wordmark -->
+  <rect class="frame" x="48" y="48" width="160" height="160" rx="26" stroke-width="9"/>
   <text x="256" y="171" font-family="'Segoe UI', system-ui, -apple-system, Helvetica, Arial, sans-serif"
         font-size="132" font-weight="800" letter-spacing="-2">
-    <tspan fill="#70757C">Fast</tspan><tspan fill="#E8632B">Py</tspan><tspan fill="#70757C">Grid</tspan>
+    <tspan class="ink">Fast</tspan><tspan fill="#E8632B">Py</tspan><tspan class="ink">Grid</tspan>
   </text>
 </svg>
