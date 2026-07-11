@@ -13,8 +13,8 @@ This module imports NO GUI toolkit. It provides:
     wire buffer surface.cpp decodes.
   * TextField -- a custom text-input control (measures via a host callable).
 
-Host adapters live in their own files: fastpygrid.render.gpu_tk (Tk) and
-fastpygrid.render.gpu_qt (Qt). Use those modules' make_sheet() to launch.
+Host adapters live in their own files: fastpygrid.render.tk (Tk) and
+fastpygrid.render.qt (Qt). Use those modules' make_sheet() to launch.
 
 Build once:  build.bat   (compiles the DLLs and copies the package into dist\fastpygrid)
 """
@@ -112,7 +112,7 @@ def _enable_dpi_awareness():
     must report physical coords/sizes (dpr==1) or every click maps toward the origin
     and the surface renders into a 1/dpr corner. These env vars only take effect if
     set BEFORE QApplication -- both Qt entry points call this right before creating
-    it, so this is the reliable place (module-import timing in gpu_qt is too late when
+    it, so this is the reliable place (module-import timing in render.qt is too late when
     the app is built first, e.g. the demo). No-op for Tk."""
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
     os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
@@ -332,7 +332,7 @@ class TextField:
         self.anchor, self.caret = a, b
 
     def draw(self, cv, x, y, w, h, bg, fg, accent, border=True):
-        pad = 4
+        pad = cv.fpx * 5 / 13                     # match the cell-text left pad (surface.cpp 'T' op)
         avail = max(1, w - 2 * pad)
         cx = self._w(self.caret)                 # keep the caret in view
         if cx - self.xscroll > avail:
@@ -952,7 +952,7 @@ class GpuEngine:
         g = self.geom
         x0, y0, w, h = g.col_x(c), g.row_y(r), g.col_width(c), g.row_h_at(r)
         if x0 <= x <= x0 + w and y0 <= y <= y0 + h:
-            self._editor["tf"].click(x - x0 - 4)
+            self._editor["tf"].click(x - x0 - self._edit_pad())
             self.redraw()
             return True
         self.commit_editor()
@@ -964,12 +964,15 @@ class GpuEngine:
         t, px, py = self._dbl
         return (time.monotonic() - t) < self._TRIPLE_MS and abs(x - px) < 4 and abs(y - py) < 4
 
+    def _edit_pad(self):
+        return self._fpx * 5 / 13                 # editor's text left pad (matches TextField.draw)
+
     def _editor_hit(self, x, y):
         """Text-space x offset if (x,y) is inside the open editor cell, else None."""
         r, c = self._editor["cell"]
         g = self.geom
         x0, y0, w, h = g.col_x(c), g.row_y(r), g.col_width(c), g.row_h_at(r)
-        return (x - x0 - 4) if (x0 <= x <= x0 + w and y0 <= y <= y0 + h) else None
+        return (x - x0 - self._edit_pad()) if (x0 <= x <= x0 + w and y0 <= y <= y0 + h) else None
 
     def _editor_double(self, x, y):
         """Double-click inside the open editor: select the word under the cursor."""
@@ -1234,6 +1237,9 @@ class GpuEngine:
             self._set_cursor(""); self._filter_hover(x, y); return
         if self._sb_hover(x, y):
             return
+        if self._editor:                       # I-beam over the open editor's text box
+            self._set_cursor("text" if self._editor_hit(x, y) is not None else "")
+            return
         self._arrow = self._over_arrow(x, y)   # read by set_edge_cursor during on_motion
         self.ctl.on_motion(x, y)
 
@@ -1250,7 +1256,7 @@ class GpuEngine:
             return
         if self._editor:
             r, c = self._editor["cell"]
-            self._editor["tf"].click(x - self.geom.col_x(c) - 4, shift=True)
+            self._editor["tf"].click(x - self.geom.col_x(c) - self._edit_pad(), shift=True)
             self.redraw(); return
         # At an edge the timer owns the scrolling, so the event itself must NOT also
         # scroll (follow=False) -- else the two compound and race the pointer.

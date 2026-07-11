@@ -1,6 +1,6 @@
 """Qt (PySide6) host for the toolkit-neutral GpuEngine (fastpygrid.core.gpu).
 
-Same shape as gpu_tk.py: the engine owns all rendering, overlays, scrollbars and
+Same shape as tk.py: the engine owns all rendering, overlays, scrollbars and
 input LOGIC and imports NO GUI toolkit. This file is the thin Qt adapter -- it
 owns the window, a native surface widget (the Gpu child HWND parents to its
 winId), fonts, event translation, clipboard and context menu, and implements the
@@ -151,7 +151,7 @@ class GpuQtGrid(QtWidgets.QWidget):
         super().showEvent(e)
         self.engine.configure_size(self.width(), self.height())
 
-    # --- host-adapter API the engine calls (mirrors gpu_tk.GpuGrid) ---
+    # --- host-adapter API the engine calls (mirrors render.tk.GpuGrid) ---
     def measure(self, text, bold=False):
         return self._fm[bool(bold)].horizontalAdvance(text)
 
@@ -166,7 +166,8 @@ class GpuQtGrid(QtWidgets.QWidget):
 
     def set_cursor(self, kind):
         c = {"resize": QtCore.Qt.SizeHorCursor,
-             "hand": QtCore.Qt.PointingHandCursor}.get(kind, QtCore.Qt.ArrowCursor)
+             "hand": QtCore.Qt.PointingHandCursor,
+             "text": QtCore.Qt.IBeamCursor}.get(kind, QtCore.Qt.ArrowCursor)
         self.setCursor(c)
 
     def set_zoom_px(self, px):
