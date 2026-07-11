@@ -204,10 +204,7 @@ class GpuQtGrid(QtWidgets.QWidget):
         return t
 
     def after_cancel(self, handle):
-        try:
-            handle.stop()
-        except Exception:
-            pass
+        handle.stop()          # QTimer.stop() is safe on an already-stopped timer
 
     def after_idle(self, fn):
         QtCore.QTimer.singleShot(0, fn)

@@ -148,12 +148,9 @@ def _screen_scale(win):
     """DPI scale factor (1.0 at 96 DPI, 1.5 at 150%, …)."""
     try:
         import ctypes as _c
-        return max(1.0, _c.windll.user32.GetDpiForSystem() / 96.0)
+        return max(1.0, _c.windll.user32.GetDpiForSystem() / 96.0)   # Win10+; Tk/Qt hosts both
     except Exception:
-        try:
-            return max(1.0, win.winfo_fpixels("1i") / 96.0)
-        except Exception:
-            return 1.0
+        return 1.0
 
 
 class GpuCanvas:
@@ -375,7 +372,7 @@ class GpuEngine:
         self.host = host
         self.model = model
         self.editable = editable
-        self._lib = lib if lib is not None else _load_lib()
+        self._lib = lib          # make_sheet/make_qt load it and raise before we get here
         s = self._scale = scale
         self._base_fpx = 13 * s
         self._fpx = max(9.0, self._base_fpx)   # float: exact size for the GPU text op
@@ -405,7 +402,7 @@ class GpuEngine:
     # --- surface lifecycle (lazy: device is created on the first Configure, AFTER
     # the window maps, so make_sheet() stays instant, load time is unchanged) --
     def _attach(self):
-        if self._lib is None or self._surf is not None:
+        if self._surf is not None:
             return
         w, h = self.host.size()
         if w < 2 or h < 2:
@@ -1144,10 +1141,7 @@ class GpuEngine:
     def _close_dropdown(self, redraw=True):
         d = self._dropdown
         if d and d["ta"]:
-            try:
-                self.host.after_cancel(d["ta"])
-            except Exception:                    # host-agnostic: any stale-timer error
-                pass
+            self.host.after_cancel(d["ta"])      # host after_cancel is a no-op on stale ids
         self._dropdown = None
         if redraw:
             self.redraw()
@@ -1305,10 +1299,7 @@ class GpuEngine:
 
     def _stop_autoscroll(self):
         if self._autoscroll_after is not None:
-            try:
-                self.host.after_cancel(self._autoscroll_after)
-            except Exception:                            # host-agnostic: any stale-timer error
-                pass
+            self.host.after_cancel(self._autoscroll_after)   # no-op on stale ids
             self._autoscroll_after = None
 
     def _autoscroll_tick(self):
@@ -1380,7 +1371,7 @@ class GpuEngine:
 
     def configure_size(self, w, h):
         """Host reports its surface resized (or first-mapped)."""
-        if self._lib is None or w < 2 or h < 2:
+        if w < 2 or h < 2:
             return
         if self._surf is None:
             self._attach()
@@ -1491,7 +1482,7 @@ class GpuEngine:
             fn()
 
     def close(self):
-        if self._surf is not None and self._lib is not None:
+        if self._surf is not None:
             self._lib.gpu_detach(self._surf)
             self._surf = None
 
