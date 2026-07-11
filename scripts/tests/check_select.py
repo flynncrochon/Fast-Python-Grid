@@ -10,7 +10,7 @@ extends, whole-row/col/select-all, Ctrl+arrow block jumps.
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "dist"))
+# needs fastpygrid installed -- run demos/setup.bat, or `pip install .`
 
 from fastpygrid.core import selection as S                        # noqa: E402
 

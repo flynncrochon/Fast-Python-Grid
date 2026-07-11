@@ -4,7 +4,7 @@ import os
 import random
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "dist"))
+# needs fastpygrid installed -- run demos/setup.bat, or `pip install .`
 from fastpygrid.core.model import GridModel
 from fastpygrid.core.coremodel import CoreModel
 
