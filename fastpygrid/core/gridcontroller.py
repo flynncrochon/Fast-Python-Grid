@@ -333,12 +333,12 @@ class GridController:
 
 
 if __name__ == "__main__":   # headless self-check of the state machine
-    from .model import GridModel
+    from .coremodel import make_model     # the real (C++-backed) model; editing lives here now
     from .geometry import Geometry
 
     class _Host:                          # records redraws, no toolkit
         def __init__(self):
-            self.model = GridModel(["A", "B"], [["a1", "b1"], ["a2", "b2"]])
+            self.model = make_model(["A", "B"], [["a1", "b1"], ["a2", "b2"]])
             self.geom = Geometry([80, 80]); self.geom.w, self.geom.h = 400, 300
             self.editable = True
             self.clip = ""
