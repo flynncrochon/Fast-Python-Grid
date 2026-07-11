@@ -12,7 +12,7 @@ holds the logic. One Direct2D engine draws it, under a thin Tk or Qt host.
 
 | Requirement | Details |
 |---|---|
-| **Windows only** | The renderer is Direct2D (`core/surface.dll`): needs Windows. No macOS/Linux backend. |
+| **Windows** | The renderer is Direct2D (`core/surface.dll`): needs Windows. No macOS/Linux backend. |
 | **Python 3.8+** | |
 | **Tk host** | Standard library only (`tkinter`). |
 | **Qt host** | Needs `PySide6` (`pip install PySide6`), the only dependency, and only for the Qt host. |
