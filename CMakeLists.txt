@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(fastgrid_native CXX)
+project(fastpygrid_native CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,10 +13,10 @@ add_library(surface  SHARED src/core/_gpu/surface.cpp)
 add_library(gridcore SHARED src/core/_gridstore/gridcore.cpp)
 set_target_properties(surface gridcore PROPERTIES PREFIX "")
 
-# Install lays out the `fastgrid` package: each .dll beside its module, plus the
-# .py sources (no .cpp). Destinations are under fastgrid/ so this works both for
-# build.bat (--prefix dist -> dist/fastgrid) and the scikit-build-core wheel
-# (prefix = wheel root -> fastgrid/ in site-packages).
-install(TARGETS surface  RUNTIME DESTINATION fastgrid/core/_gpu       LIBRARY DESTINATION fastgrid/core/_gpu)
-install(TARGETS gridcore RUNTIME DESTINATION fastgrid/core/_gridstore LIBRARY DESTINATION fastgrid/core/_gridstore)
-install(DIRECTORY src/ DESTINATION fastgrid FILES_MATCHING PATTERN "*.py")
+# Install lays out the `fastpygrid` package: each .dll beside its module, plus the
+# .py sources (no .cpp). Destinations are under fastpygrid/ so this works both for
+# build.bat (--prefix dist -> dist/fastpygrid) and the scikit-build-core wheel
+# (prefix = wheel root -> fastpygrid/ in site-packages).
+install(TARGETS surface  RUNTIME DESTINATION fastpygrid/core/_gpu       LIBRARY DESTINATION fastpygrid/core/_gpu)
+install(TARGETS gridcore RUNTIME DESTINATION fastpygrid/core/_gridstore LIBRARY DESTINATION fastpygrid/core/_gridstore)
+install(DIRECTORY src/ DESTINATION fastpygrid FILES_MATCHING PATTERN "*.py")

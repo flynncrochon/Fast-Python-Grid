@@ -9,11 +9,11 @@ empty space (spreadsheet-style): the scrollbar thumb shrinks as you overscroll a
 back when you scroll in again -- unless you typed out there, which grows the sheet.
 
 Proves the toolkit-neutral GpuEngine runs unchanged under Qt. Build the DLL once:
-    python -m fastgrid.core.gpu --build
+    python -m fastpygrid.core.gpu --build
 """
 import sys
 
-# _data.py and fastgrid/ both live next to this file (fastgrid staged by setup.bat).
+# _data.py and fastpygrid/ both live next to this file (fastpygrid staged by setup.bat).
 from _data import (HEADERS, COL_W, gen_rows, rows_arg, stream_styles, choices_demo,
                    lines_demo, readonly_demo)
 
@@ -28,8 +28,8 @@ SHEETS = [
 def _add_sheet(tabs, title, headers, rows, col_w, scale, lib, **opts):
     """Build one grid (its own model + engine) into a fresh Qt tab page."""
     from PySide6 import QtWidgets
-    from fastgrid.render.gpu_qt import GpuQtGrid
-    from fastgrid.core.coremodel import make_model
+    from fastpygrid.render.gpu_qt import GpuQtGrid
+    from fastpygrid.core.coremodel import make_model
     page = QtWidgets.QWidget()
     lay = QtWidgets.QVBoxLayout(page)
     lay.setContentsMargins(0, 0, 0, 0)
@@ -47,11 +47,11 @@ def _add_sheet(tabs, title, headers, rows, col_w, scale, lib, **opts):
 
 def main():
     from PySide6 import QtWidgets
-    from fastgrid.core.gpu import _load_lib, _enable_dpi_awareness, _screen_scale
+    from fastpygrid.core.gpu import _load_lib, _enable_dpi_awareness, _screen_scale
     lib = _load_lib()
     if lib is None:
         raise SystemExit("Gpu surface unavailable -- build it with "
-                         "`python -m fastgrid.core.gpu --build`.")
+                         "`python -m fastpygrid.core.gpu --build`.")
     app = QtWidgets.QApplication.instance()
     if app is None:
         _enable_dpi_awareness()
@@ -63,7 +63,7 @@ def main():
     # the data (with 100k rows you'd never scroll to the phantom region to see them).
     small = data if n <= 30 else gen_rows(30)
     win = QtWidgets.QTabWidget()
-    win.setWindowTitle("fastgrid (gpu-qt) — sheet options — %s rows" % f"{n:,}")
+    win.setWindowTitle("fastpygrid (gpu-qt) — sheet options — %s rows" % f"{n:,}")
     win.resize(round(980 * scale), round(620 * scale))
     for title, opts in SHEETS:
         _add_sheet(win, title, HEADERS, (small if opts else data), COL_W, scale, lib, **opts)

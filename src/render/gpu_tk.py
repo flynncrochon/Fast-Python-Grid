@@ -1,4 +1,4 @@
-"""Tk host for the toolkit-neutral GpuEngine (fastgrid.core.gpu).
+"""Tk host for the toolkit-neutral GpuEngine (fastpygrid.core.gpu).
 
 The engine owns all rendering, overlays, scrollbars and input LOGIC and imports
 NO GUI toolkit. This file is the thin Tk adapter: it owns the window, the surface
@@ -147,14 +147,14 @@ class GpuGrid(tk.Frame):
 
 
 def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
-               col_w=None, title="fastgrid (gpu)", uncap_rows=False, uncap_cols=False):
+               col_w=None, title="fastpygrid (gpu)", uncap_rows=False, uncap_cols=False):
     """One-call sheet, Direct2D renderer under a Tk host. Raises if the GPU surface
     can't be built (DLL missing / no D3D device)."""
     lib = _load_lib()
     if lib is None:
         raise RuntimeError(
             "Gpu surface unavailable — build it with "
-            "`python -m fastgrid.core.gpu --build`.")
+            "`python -m fastpygrid.core.gpu --build`.")
     if master is None:
         _enable_dpi_awareness()
         win = tk.Tk()

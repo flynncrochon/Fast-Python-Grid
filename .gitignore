@@ -13,7 +13,7 @@ dist/
 build/
 
 # staged library copy (setup.bat)
-demos/fastgrid/
+demos/fastpygrid/
 
 # python packaging
 *.egg-info/

@@ -8,9 +8,9 @@ import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "dist"))
-from fastgrid.core.geometry import Geometry
-from fastgrid.core.model import GridModel
-from fastgrid.core.paint import paint
+from fastpygrid.core.geometry import Geometry
+from fastpygrid.core.model import GridModel
+from fastpygrid.core.paint import paint
 
 
 def _timeit(fn, iters):

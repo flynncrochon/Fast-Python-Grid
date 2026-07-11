@@ -1,4 +1,4 @@
-"""Direct2D/GPU demo — the fastgrid Gpu renderer (Windows only).
+"""Direct2D/GPU demo — the fastpygrid Gpu renderer (Windows only).
 
     python demos/demo_gpu_tk.py                 # 100k rows on the GPU surface
     python demos/demo_gpu_tk.py --rows 500000   # stress it
@@ -11,11 +11,11 @@ back when you scroll in again — unless you typed out there, which grows the sh
 Each sheet is a full editable grid: scroll (wheel + scrollbars), click/drag select,
 keyboard nav, Ctrl+wheel zoom, F11 fullscreen (Esc exits), in-cell editing, dropdown
 cells, read-only columns, right-click menu, ▼ column filter/sort, and Ctrl+F find.
-Build the DLL once with:  python -m fastgrid.core.gpu --build
+Build the DLL once with:  python -m fastpygrid.core.gpu --build
 """
 import sys
 
-# _data.py and fastgrid/ both live next to this file (fastgrid staged by setup.bat).
+# _data.py and fastpygrid/ both live next to this file (fastpygrid staged by setup.bat).
 from _data import (HEADERS, COL_W, gen_rows, rows_arg, stream_styles, choices_demo,
                    lines_demo, readonly_demo)
 
@@ -30,8 +30,8 @@ SHEETS = [
 def _add_sheet(nb, title, headers, rows, col_w, scale, lib, **opts):
     """Build one grid (its own model + engine) into a fresh notebook tab."""
     import tkinter as tk
-    from fastgrid.render.gpu_tk import GpuGrid
-    from fastgrid.core.coremodel import make_model
+    from fastpygrid.render.gpu_tk import GpuGrid
+    from fastpygrid.core.coremodel import make_model
     frame = tk.Frame(nb)
     nb.add(frame, text=title)
     model = make_model(headers, rows, editable=True)
@@ -48,16 +48,16 @@ def _add_sheet(nb, title, headers, rows, col_w, scale, lib, **opts):
 def main():
     import tkinter as tk
     from tkinter import ttk
-    from fastgrid.core.gpu import _load_lib, _enable_dpi_awareness, _screen_scale
+    from fastpygrid.core.gpu import _load_lib, _enable_dpi_awareness, _screen_scale
     lib = _load_lib()
     if lib is None:
         raise SystemExit("Gpu surface unavailable — build it with "
-                         "`python -m fastgrid.core.gpu --build`.")
+                         "`python -m fastpygrid.core.gpu --build`.")
     _enable_dpi_awareness()
     n = rows_arg(sys.argv)
     data = gen_rows(n)             # generate once; each sheet's model copies it
     root = tk.Tk()
-    root.title("fastgrid (gpu) — sheet options — %s rows" % f"{n:,}")
+    root.title("fastpygrid (gpu) — sheet options — %s rows" % f"{n:,}")
     scale = _screen_scale(root)
     root.geometry("%dx%d" % (round(980 * scale), round(620 * scale)))
     # uncapped tabs use a SMALL sheet so the empty repeatable cells are right past
