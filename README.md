@@ -16,7 +16,7 @@ holds the logic. One Direct2D engine draws it, under a thin Tk or Qt host.
 | **Python 3.8+** | |
 | **Tk host** | Standard library only (`tkinter`). |
 | **Qt host** | Needs `PySide6` (`pip install PySide6`), the only dependency, and only for the Qt host. |
-| **Native DLLs** | Not committed. They build into the wheel via `build.bat` (CMake through scikit-build-core, which finds MSVC). `surface.dll` draws the Direct2D surface and `gridcore.dll` is an optional C++ data core (falls back to pure Python if missing). Building needs CMake + MSVC. |
+| **Native DLLs** | The wheel bundles two compiled DLLs. `surface.dll` draws the Direct2D surface and `gridcore.dll` is an optional C++ data core (falls back to pure Python if missing). Building them from source needs CMake + MSVC. |
 
 ## Install
 
