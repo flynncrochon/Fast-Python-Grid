@@ -17,7 +17,7 @@ from ..core.gpu import GpuEngine, _load_lib, _enable_dpi_awareness, _screen_scal
 
 
 def _win_clip_html():
-    """Windows CF_HTML clipboard flavor (UTF-8), or "" — Tk can't fetch it itself.
+    """Windows CF_HTML clipboard flavor (UTF-8), or "" (Tk can't fetch it itself).
     This is the table format Jira/browsers/spreadsheets put alongside plain text."""
     if sys.platform != "win32":
         return ""
@@ -153,7 +153,7 @@ def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
     lib = _load_lib()
     if lib is None:
         raise RuntimeError(
-            "Gpu surface unavailable — build it with "
+            "Gpu surface unavailable, build it with "
             "`python -m fastpygrid.core.gpu --build`.")
     if master is None:
         _enable_dpi_awareness()

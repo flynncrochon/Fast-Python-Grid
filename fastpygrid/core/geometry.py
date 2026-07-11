@@ -1,9 +1,9 @@
-"""All the grid MATH -- no toolkit, no colours. Column x-positions, scroll
+"""All the grid MATH: no toolkit, no colours. Column x-positions, scroll
 clamping, pixel<->cell hit-testing, visible-range computation. Both renderers
 share this instead of each re-deriving it.
 
-Grid rows: 0..hdr_rows-1 are header rows (field names on the bottom one; any
-rows above it are group bands), pinned in the field band; rows hdr_rows..N are
+Grid rows: 0..hdr_rows-1 are header rows (field names on the bottom one, any
+rows above it are group bands), pinned in the field band. Rows hdr_rows..N are
 data and scroll in the body. ``header_h`` (letter band + header rows) is where
 the scrolling body begins. ``top_row`` is the first visible DATA row (>= hdr_rows).
 """
@@ -12,12 +12,12 @@ from itertools import accumulate
 
 
 class Geometry:
-    MAX_COLS = 16384          # column cap (the classic spreadsheet limit); uncapped scroll stops there
+    MAX_COLS = 16384          # column cap (the classic spreadsheet limit), uncapped scroll stops there
     def __init__(self, col_w, frozen=0, gutter_w=56, row_h=22, hdr_rows=1,
                  uncap_rows=False, uncap_cols=False):
         # uncap_*: let the view scroll past the last row/col into empty space
         # (spreadsheet-style). The scrollbar thumb shrinks as you overscroll and snaps
-        # back when you scroll in again -- unless you typed out there, which grows
+        # back when you scroll in again, unless you typed out there, which grows
         # the model. False (default) = clamped to the data.
         self.uncap_rows = uncap_rows
         self.uncap_cols = uncap_cols
@@ -115,7 +115,7 @@ class Geometry:
     def col_extent(self):
         """Scrollable content width (excludes the frozen block). Uncapped: grown to
         include the current horizontal overscroll, plus one phantom column of
-        headroom so the extent always exceeds the view -- the scrollbar stays
+        headroom so the extent always exceeds the view: the scrollbar stays
         visible and there's always another empty column to scroll into."""
         base = self.content_w() - self.frozen_w()
         if not self.uncap_cols:
@@ -138,7 +138,7 @@ class Geometry:
         self.scroll_x = max(0, min(self.scroll_x, self.max_scroll_x()))
 
     def visible_data_rows(self, nrows):
-        """Visible DATA grid rows; the header rows are always pinned. Uncapped:
+        """Visible DATA grid rows, the header rows are always pinned. Uncapped:
         keeps filling the viewport past the data with phantom (blank) rows, so the
         gutter keeps numbering, spreadsheet-style."""
         hi = self.top_row + self.vis_rows()
@@ -149,7 +149,7 @@ class Geometry:
     def visible_cols(self, ncols):
         fx = self.freeze_x()
         out = list(range(min(self.frozen, ncols)))    # frozen block always shown
-        # First scrollable real column poking past the freeze line -- bisect the
+        # First scrollable real column poking past the freeze line: bisect the
         # prefix sums instead of scanning every column (O(log n) for wide sheets).
         c = max(self.frozen, bisect_right(self._cum, self.frozen_w() + self.scroll_x) - 1)
         while c < ncols and self.col_x(c) < self.w:
@@ -157,7 +157,7 @@ class Geometry:
                 out.append(c)
             c += 1
         if self.uncap_cols:                          # phantom columns fill the overscroll
-            c, pw = max(c, ncols), self._phantom_w()  # (empty, lettered, spreadsheet-style; capped at 16384)
+            c, pw = max(c, ncols), self._phantom_w()  # (empty, lettered, spreadsheet-style, capped at 16384)
             while c < self.MAX_COLS:
                 x = self.col_x(c)
                 if x >= self.w:
@@ -173,7 +173,7 @@ class Geometry:
             return None
         content_x = (x - self.gutter_w) if x < self.freeze_x() \
             else (x - self.gutter_w + self.scroll_x)
-        if content_x < self._cum[-1]:                           # a real column -- bisect the sums
+        if content_x < self._cum[-1]:                           # a real column, bisect the sums
             c = bisect_right(self._cum, content_x) - 1
             return c if 0 <= c < ncols else None
         if self.uncap_cols:                                     # a phantom column (capped at XFD)
@@ -184,7 +184,7 @@ class Geometry:
     def hit(self, x, y, nrows, ncols):
         """(region, row, col). region in all/gutter/band/cell.
 
-        The column-letter band (A/B/C) is 'band' (whole-column select); the
+        The column-letter band (A/B/C) is 'band' (whole-column select). The
         header rows are normal selectable 'cell's (the bottom one's filter
         button is intercepted by the renderer before selection)."""
         col = self.x_to_col(x, ncols)
@@ -210,11 +210,11 @@ class Geometry:
 
     def col_edge_hit(self, x, y, ncols, grab=4):
         """Column whose RIGHT border sits within `grab` px of screen-x `x`, when
-        the pointer is in the header band -- else None. Drives column drag-resize
-        and dbl-click autofit; resizes the column LEFT of the grabbed border."""
+        the pointer is in the header band, else None. Drives column drag-resize
+        and dbl-click autofit, resizes the column LEFT of the grabbed border."""
         if not (0 <= y < self.header_h):
             return None
-        # Only the border nearest the pointer can match -- bisect to it, then test
+        # Only the border nearest the pointer can match: bisect to it, then test
         # it and its neighbours (grab tolerance), instead of scanning every column.
         content_x = (x - self.gutter_w) if x < self.freeze_x() \
             else (x - self.gutter_w + self.scroll_x)
@@ -261,7 +261,7 @@ class Geometry:
 
     def drag_row(self, y, nrows):
         """Row a cell-drag targets from a pointer y. Above the body it reaches a
-        header row ONLY when the body is at the top; otherwise it clamps to the
+        header row ONLY when the body is at the top, otherwise it clamps to the
         topmost visible data row so the caller's autoscroll reveals rows above
         one at a time instead of jumping onto the header band."""
         if y >= self.header_h:
@@ -303,7 +303,7 @@ if __name__ == "__main__":   # overscroll clamp / extent self-check (no toolkit)
     g.set_cols([400, 400])
     g.uncap_cols = True
     g.scroll_x = 99999; g.clamp(N)
-    assert 0 < g.scroll_x <= g.max_scroll_x(), g.scroll_x   # overscroll sticks; still room past it
+    assert 0 < g.scroll_x <= g.max_scroll_x(), g.scroll_x   # overscroll sticks, still room past it
     g.scroll_x = 0; g.clamp(N)
     base = g.content_w() - g.frozen_w()
     assert g.scroll_x == 0 and g.col_extent() == base + g._phantom_w()  # snapped back, one column of headroom

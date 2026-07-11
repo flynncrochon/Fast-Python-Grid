@@ -1,12 +1,12 @@
 """Toolkit-neutral grid controller: owns the selection state machine and turns
-normalized input events into core calls. Shared by the Tk and Qt renderers --
+normalized input events into core calls. Shared by the Tk and Qt renderers:
 selection/anchor, click+drag selection (incl. frozen-pane crossing),
 keyboard nav/copy/paste/undo, column drag-resize + dbl-click autofit, and
 Ctrl+wheel zoom.
 
-A renderer owns only what genuinely differs per toolkit -- drawing the display
+A renderer owns only what differs per toolkit (drawing the display
 list, building widgets (editor, filter popup, find bar), and translating native
-events -- then delegates the logic here through this small ``host`` surface:
+events), then delegates the logic here through this small ``host`` surface:
 
     host.model, host.geom, host.editable
     host.redraw()                     repaint the viewport
@@ -40,7 +40,7 @@ class GridController:
         self.drag_region = None
         self.resize_col = None             # column being drag-resized, else None
         self.corner_hover = False
-        self._pending_dropdown = False     # ▼ button pressed; open the list on release
+        self._pending_dropdown = False     # ▼ button pressed, open the list on release
         # Zoom: metrics are recomputed from these base values * _zoom (never
         # ratio-chained), so it stays crisp and never drifts. Manual column
         # resizes write back to _base_w so a later zoom keeps them proportional.
@@ -57,7 +57,7 @@ class GridController:
         g, m = self.geom, self.model
         last_row, last_col = m.nrows() - 1, m.ncols - 1
         # Uncapped: let selection/arrow-nav reach the phantom cells that are on
-        # screen. The bound grows with the view, so it stays "infinite" -- each
+        # screen. The bound grows with the view, so it stays "infinite": each
         # scroll reveals more reachable cells (spreadsheet-style).
         if g.uncap_rows:
             last_row = max(last_row, g.top_row + g.vis_rows())
@@ -84,7 +84,7 @@ class GridController:
             return
         if region == "cell" and row >= g.hdr_rows and col is not None and self.editable \
                 and m.cell_choices(row, col) is not None \
-                and g.dropdown_btn_hit(x, y, row, col):      # ▼ button -> select now, open on release
+                and g.dropdown_btn_hit(x, y, row, col):      # ▼ button: select now, open on release
             self.drag_region = None
             self.sel, self.extra, self.active, self.anchor = S.resolve_click(
                 region, row, col, anchor=self.anchor, sel=self.sel, extra=self.extra,
@@ -118,7 +118,7 @@ class GridController:
 
     def on_drag(self, x, y, follow=True):
         """Resolve a drag-extend from a pointer pos. ``follow`` scrolls the view to
-        keep the pressed-to cell visible; the engine passes follow=False while its
+        keep the pressed-to cell visible. The engine passes follow=False while its
         edge-autoscroll timer owns the scrolling, so the two don't compound (that
         double-scroll raced the pointer and flew thousands of rows past the edge)."""
         g, m = self.geom, self.model
@@ -151,7 +151,7 @@ class GridController:
     def on_release(self):
         self.drag_region = None
         self.resize_col = None
-        if self._pending_dropdown:          # ▼ button click: open the list now (after the release)
+        if self._pending_dropdown:          # ▼ button click, open the list now (after the release)
             self._pending_dropdown = False
             self.host.begin_edit()
         self.host.redraw()      # full repaint so chrome (corner tri) reflects the final selection
@@ -170,8 +170,8 @@ class GridController:
                 self.host.begin_edit()
 
     def ensure_col(self, c):
-        """Grow the sheet so column `c` exists -- editing a phantom column past the
-        last one (uncapped). No-op for a real column. Widens the model AND geometry
+        """Grow the sheet so column `c` exists (editing a phantom column past the
+        last one, uncapped). No-op for a real column. Widens the model AND geometry
         (at the phantom width the empty columns were shown), so the new columns store
         text and render/hit/zoom exactly like the originals."""
         if c < self.model.ncols:
@@ -192,7 +192,7 @@ class GridController:
 
     def autofit(self, c, rows=None):
         # fit headers + currently-visible rows only by default. Scanning 1M rows for the
-        # widest cell would stall; visible-fit matches what the user sees. Callers that KNOW
+        # widest cell would stall. Visible-fit matches what the user sees. Callers that KNOW
         # the grid is small (or must fit content below the fold on first load) can pass an
         # explicit `rows` list (grid-row indices) to fit against those instead.
         H = self.geom.hdr_rows
@@ -270,7 +270,7 @@ class GridController:
 
     def _jump(self, rng):
         """Reselect the cells an undo/redo touched (None = a view-only change such
-        as a filter/sort undo; leave the selection where it is)."""
+        as a filter/sort undo, leave the selection where it is)."""
         if rng is not None:
             r1, c1, r2, c2 = rng
             self.sel, self.extra = (r1, c1, r2, c2), []
@@ -284,7 +284,7 @@ class GridController:
         self.host.clipboard_set(self.model.selection_text(self.ranges()))
 
     def cut(self):
-        """Copy then clear -- model.delete_selection is a no-op on a read-only grid,
+        """Copy then clear. model.delete_selection is a no-op on a read-only grid,
         so this is safe even if a caller doesn't grey the menu item out."""
         self.copy()
         self.model.delete_selection(self.ranges())
@@ -336,7 +336,7 @@ if __name__ == "__main__":   # headless self-check of the state machine
     from .model import GridModel
     from .geometry import Geometry
 
-    class _Host:                          # records redraws; no toolkit
+    class _Host:                          # records redraws, no toolkit
         def __init__(self):
             self.model = GridModel(["A", "B"], [["a1", "b1"], ["a2", "b2"]])
             self.geom = Geometry([80, 80]); self.geom.w, self.geom.h = 400, 300

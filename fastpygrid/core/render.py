@@ -1,14 +1,14 @@
 """blit(display_list, canvas) -- the toolkit-neutral draw walk.
 
-paint.py decides WHAT the frame looks like (a display list of pure data); this
+paint.py decides WHAT the frame looks like (a display list of pure data). This
 walks that list and issues primitive draw calls against a ``canvas`` (GpuCanvas).
-Layout, z-order and the funnel/arrow decomposition live here; the canvas is just
+Layout, z-order and the funnel/arrow decomposition live here. The canvas is just
 "here's how I draw a rect / text / line / polygon / glyph":
 
     canvas.rect(x, y, w, h, fill=None, outline=None, width=1)
     canvas.text(x, y, w, h, s, color, bold=False, center=False)   # clipped to w
     canvas.line(x1, y1, x2, y2, color, width)
-    canvas.poly(points, color)                    # filled; points = [(x, y), ...]
+    canvas.poly(points, color)                    # filled, points = [(x, y), ...]
     canvas.glyph(cx, cy, s, color, px)            # one char centred at pixel size
 """
 from . import theme as T
@@ -17,7 +17,7 @@ from . import theme as T
 def blit(dl, cv):
     # Grid lines are the 1px gaps between inset cell fills over a single grid-colour
     # backing rect -- one fill per cell, no per-cell stroke (~4x faster in Qt,
-    # pixel-identical). Cells tile gaplessly; the backing shows only at each right/bottom edge.
+    # pixel-identical). Cells tile gaplessly, the backing shows only at each right/bottom edge.
     if dl.cells:
         x0 = min(c[0] for c in dl.cells)
         y0 = min(c[1] for c in dl.cells)

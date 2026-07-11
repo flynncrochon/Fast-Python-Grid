@@ -21,7 +21,7 @@ _CLEAN = str.maketrans("\t\n\r", "   ")
 
 class _HtmlTable(HTMLParser):
     """First <table> in the clipboard HTML -> list of row lists of cell text.
-    ponytail: ignores colspan/rowspan (Jira tables rarely merge); add if needed."""
+    ponytail: ignores colspan/rowspan (Jira tables rarely merge), add if needed."""
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.rows, self._row, self._cell, self._done = [], None, None, False
@@ -108,16 +108,16 @@ class GridModel:
         self._find_active = None  # (row, col)
         self._find_cache = None    # (needle, case, scope, matches) of the last complete
                                    # scan -- lets the typing path refine instead of rescan
-        self._distinct = {}       # col -> sorted distinct values (filter popup); data-edit invalidates
+        self._distinct = {}       # col -> sorted distinct values (filter popup), data-edit invalidates
         self._vlines = set()      # column indices with a thick divider on their RIGHT edge
         self._hlines = set()      # grid-row indices with a thick divider on their BOTTOM edge
         self._readonly = set()    # columns that reject edits/paste/delete (still selectable)
-        self._readonly_rows = set()  # SOURCE rows (-1-gr for header) that reject edits; follows sort/filter
-        self._styles = {}         # (src_row | -1 for header, col) -> {fg,bg,bold}; display only
-        self._choices = {}        # (src_row | -1, col) -> (choice, ...); a dropdown cell
-        self._col_choices = {}    # col -> (choice, ...); whole-column dropdown default (O(1))
+        self._readonly_rows = set()  # SOURCE rows (-1-gr for header) that reject edits, follows sort/filter
+        self._styles = {}         # (src_row | -1 for header, col) -> {fg,bg,bold}, display only
+        self._choices = {}        # (src_row | -1, col) -> (choice, ...), a dropdown cell
+        self._col_choices = {}    # col -> (choice, ...), whole-column dropdown default (O(1))
         self._choice_cols = set() # columns holding any dropdown (paint() per-column skip)
-        self._choice_intern = {}  # option-list -> itself; a whole column of identical
+        self._choice_intern = {}  # option-list -> itself: a whole column of identical
                                   # dropdowns shares ONE tuple, not a copy per cell
         self._rebuild()
         self._committed_filt = self._filt_snapshot()   # last view state pushed to undo
@@ -162,9 +162,9 @@ class GridModel:
         self._find_cache = None            # view changed -> cached grid-row coords are stale
         self._used = None                  # ...and the used-range (scrollbar) snapshot
         if self._is_plain():
-            self._view = []      # unread while plain (_src_data/_data_count skip it); don't build 1M ids
+            self._view = []      # unread while plain (_src_data/_data_count skip it), don't build 1M ids
             return
-        rows = range(len(self._rows))      # narrowed by the first filter; not materialised up front
+        rows = range(len(self._rows))      # narrowed by the first filter, not materialised up front
         for col, allowed in self._filters.items():
             rows = [r for r in rows if self._rows[r][col] in allowed]
         for col, spec in self._text_filters.items():
@@ -194,7 +194,7 @@ class GridModel:
 
     def _real_rows(self):
         """Grid rows EXCLUDING the blank pad -- headers + real data. Find scans
-        these; select-all covers them."""
+        these, select-all covers them."""
         return self._hdr + (len(self._rows) if self._is_plain() else len(self._view))
 
     def _src_data(self, di):
@@ -217,9 +217,9 @@ class GridModel:
     def used_extent(self):
         """(nrows-equiv, ncols) trimmed to real content, for the scrollbar thumb.
         Editing a cell out in the uncapped overscroll materialises every blank row/
-        column up to it; clearing it leaves those blanks, so nrows()/ncols would
+        column up to it. Clearing it leaves those blanks, so nrows()/ncols would
         keep the thumb tiny forever. This reports the last row/column that actually
-        holds text (+ PAD nav rows) so the thumb snaps back. Cached; invalidated on
+        holds text (+ PAD nav rows) so the thumb snaps back. Cached, invalidated on
         every edit / view change.
         ponytail: backward scan, O(trailing-blank cells) -- on the C++ model that's
         a ctypes call per cell. Add a gc_used_extent DLL export if a giant
@@ -249,9 +249,9 @@ class GridModel:
         self._used = (used_nrows, uc)
         return self._used
 
-    # --- per-cell style (display only; keyed by SOURCE row so it follows the
+    # --- per-cell style (display only, keyed by SOURCE row so it follows the
     # data through sort/filter). Not undoable. bg is the cell's base fill (wash
-    # tints over it, find-highlight overrides); fg/bold always apply. ----------
+    # tints over it, find-highlight overrides). fg/bold always apply. ----------
     def _style_key(self, gr, col):
         if not (0 <= col < self._w):
             return None
@@ -264,7 +264,7 @@ class GridModel:
         return (r, col) if r < len(self._rows) else None    # not the blank pad
 
     def set_cell_style(self, gr, col, fg=None, bg=None, bold=None):
-        """Style one cell. Pass any of fg/bg (#rrggbb) or bold (bool); None
+        """Style one cell. Pass any of fg/bg (#rrggbb) or bold (bool). None
         leaves that attribute unchanged. A later value overrides an earlier one."""
         key = self._style_key(gr, col)
         if key is None:
@@ -282,7 +282,7 @@ class GridModel:
             return None
         return self._styles.get(self._style_key(gr, col))
 
-    # --- per-cell dropdown choices (display only; keyed like styles so they
+    # --- per-cell dropdown choices (display only, keyed like styles so they
     # follow the row through sort/filter). Editing such a cell offers a select
     # menu instead of free text -- see the renderers' begin_edit. -------------
     def set_cell_choices(self, gr, col, choices):
@@ -292,7 +292,7 @@ class GridModel:
         if key is None:
             return
         # _choice_cols tracks columns with any dropdown so paint() skips the per-cell
-        # lookup elsewhere. O(1) on set; clear rescans this column only (clears are rare).
+        # lookup elsewhere. O(1) on set. clear rescans this column only (clears are rare).
         if choices is None:
             if self._choices.pop(key, None) is not None \
                     and not any(cc == col for _r, cc in self._choices) \
@@ -308,7 +308,7 @@ class GridModel:
     def set_col_choices(self, col, choices):
         """Make an ENTIRE column a dropdown offering `choices`. O(1) regardless of
         row count -- prefer this to a set_cell_choices() per row. A per-cell
-        set_cell_choices() on the same column still overrides this default;
+        set_cell_choices() on the same column still overrides this default.
         choices=None clears the column default."""
         if not (0 <= col < self._w):
             return
@@ -331,7 +331,7 @@ class GridModel:
     def cell_choices(self, gr, col):
         """The choice list for a dropdown cell, or None for a plain cell. Hot
         path (per edit), so the common no-dropdowns case is one dict-empty check.
-        A per-cell choice wins; otherwise the column default (set_col_choices)."""
+        A per-cell choice wins, otherwise the column default (set_col_choices)."""
         if not self._choices and not self._col_choices:
             return None
         return self._choices.get(self._style_key(gr, col)) or self._col_choices.get(col)
@@ -355,7 +355,7 @@ class GridModel:
     def hlines(self):
         return self._hlines
 
-    # --- read-only columns (reject edits/paste/delete; still selectable/copyable) --
+    # --- read-only columns (reject edits/paste/delete, still selectable/copyable) --
     def set_readonly_col(self, col, on=True):
         """Block edits, paste and delete in `col` (on=False re-enables it)."""
         self._readonly.add(col) if on else self._readonly.discard(col)
@@ -363,7 +363,7 @@ class GridModel:
     def col_readonly(self, col):
         return col in self._readonly
 
-    # --- read-only rows (freeze a row: reject edits/paste/delete; still
+    # --- read-only rows (freeze a row: reject edits/paste/delete, still
     # selectable/copyable). Keyed by SOURCE row so the lock follows the data
     # through sort/filter, like styles. Pass any grid row (header rows too).
     def set_readonly_row(self, gr, on=True):
@@ -391,7 +391,7 @@ class GridModel:
         if vals is not None:
             return vals[:cap], len(vals) > cap
         seen = set()
-        add = seen.add                              # bind once; called per row on a full scan
+        add = seen.add                              # bind once, called per row on a full scan
         for row in self._rows:
             add(row[col])
             if len(seen) > cap:                     # high-card bails out here after ~cap rows
@@ -629,7 +629,7 @@ class GridModel:
         self._committed_filt = self._filt_snapshot()
 
     def _replay_edit(self, entry, use_new):
-        """Apply/revert a cell-diff entry; returns the cell to reselect. CoreModel
+        """Apply/revert a cell-diff entry, returns the cell to reselect. CoreModel
         overrides this to drive the C++ undo stack instead of the Python diff log."""
         _kind, changes, filt, target, pre_len = entry
         for src, col, old, new in (changes if use_new else reversed(changes)):
@@ -791,7 +791,7 @@ class GridModel:
         if not text:
             return []
         # Jira/Confluence/browser tables land on the clipboard as an HTML <table>
-        # (the rich form); their plain-text flavor collapses each cell onto its
+        # (the rich form). their plain-text flavor collapses each cell onto its
         # own line and is unrecoverable. Prefer the table when the host handed it over.
         head = text[:64].lstrip().lower()
         if head[:8] == "version:" or head[:1] == "<":   # CF_HTML header or raw HTML
@@ -800,7 +800,7 @@ class GridModel:
                 while rows and not any(c.strip() for c in rows[-1]):
                     rows.pop()
                 return rows
-        # default reader dialect handles commas + quoting; tab data just swaps the delimiter
+        # default reader dialect handles commas + quoting, tab data swaps the delimiter
         reader = csv.reader(StringIO(text), delimiter="\t") if "\t" in text else csv.reader(StringIO(text))
         rows = list(reader)
         while rows and not any(c.strip() for c in rows[-1]):
@@ -977,7 +977,7 @@ if __name__ == "__main__":   # headless check of diff-based undo/redo
     H = fu.header_rows
     assert fu.undo() == (H, 0, H, 0)                             # then undo the edit -> its cell
     # used_extent snaps back after overscroll edit+delete (the scrollbar-thumb fix):
-    # editing far out grows the used range; clearing it returns to the real content.
+    # editing far out grows the used range, clearing it returns to the real content.
     ue = GridModel(["A", "B"], [["a1", "b1"], ["a2", "b2"]])
     base = ue.used_extent()
     ue.set_cell(500, 1, "x")                        # materialise ~500 blank rows

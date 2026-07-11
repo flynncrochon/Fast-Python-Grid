@@ -1,4 +1,4 @@
-"""Direct2D/GPU demo — the fastpygrid Gpu renderer (Windows only).
+"""Direct2D/GPU demo: the fastpygrid Gpu renderer (Windows only).
 
     python demos/demo_gpu_tk.py                 # 100k rows on the GPU surface
     python demos/demo_gpu_tk.py --rows 500000   # stress it
@@ -6,7 +6,7 @@
 Tabs across the top open separate whole sheets, each with different options, so you
 can compare them live. The "Uncapped" tabs scroll past the last row/column into
 empty space (spreadsheet-style): the scrollbar thumb shrinks as you overscroll and snaps
-back when you scroll in again — unless you typed out there, which grows the sheet.
+back when you scroll in again, unless you typed out there, which grows the sheet.
 
 Each sheet is a full editable grid: scroll (wheel + scrollbars), click/drag select,
 keyboard nav, Ctrl+wheel zoom, F11 fullscreen (Esc exits), in-cell editing, dropdown
@@ -51,13 +51,13 @@ def main():
     from fastpygrid.core.gpu import _load_lib, _enable_dpi_awareness, _screen_scale
     lib = _load_lib()
     if lib is None:
-        raise SystemExit("Gpu surface unavailable — build it with "
+        raise SystemExit("Gpu surface unavailable. Build it with "
                          "`python -m fastpygrid.core.gpu --build`.")
     _enable_dpi_awareness()
     n = rows_arg(sys.argv)
-    data = gen_rows(n)             # generate once; each sheet's model copies it
+    data = gen_rows(n)             # generate once, each sheet's model copies it
     root = tk.Tk()
-    root.title("fastpygrid (gpu) — sheet options — %s rows" % f"{n:,}")
+    root.title("fastpygrid (gpu): sheet options, %s rows" % f"{n:,}")
     scale = _screen_scale(root)
     root.geometry("%dx%d" % (round(980 * scale), round(620 * scale)))
     # uncapped tabs use a SMALL sheet so the empty repeatable cells are right past

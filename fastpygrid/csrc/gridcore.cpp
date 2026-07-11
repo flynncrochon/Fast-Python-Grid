@@ -5,7 +5,7 @@
 // presentation metadata (styles/choices/lines/readonly).
 //
 // Addressing: cells is row-major over (hdr + ndata) rows. A "grid row" gr is
-// gr<hdr -> header row gr; else data index di=gr-hdr -> source row via the view
+// gr<hdr -> header row gr, else data index di=gr-hdr -> source row via the view
 // Python pushes (identity when plain). Undo records (combined_row, col, old, new).
 //
 // C ABI, ctypes-loaded (mirrors _d2d/surface.dll). Length-prefixed packing is
@@ -20,7 +20,7 @@
 
 // Undo entry as struct-of-arrays: one flat index per changed cell + the old
 // text (moved in from the cell during the op -- no copy on the hot path). `nw`
-// is populated for paste/set; left EMPTY for a pure delete (all-new == ""), so
+// is populated for paste/set, left EMPTY for a pure delete (all-new == ""), so
 // a full-grid delete never allocates 2.4M empty strings. undo/redo copy back
 // from the log (the cold path).
 struct Edit {
@@ -34,7 +34,7 @@ struct Edit {
 struct Core {
     int cols, hdr;
     std::vector<std::string> d;          // row-major, (hdr+ndata)*cols
-    std::vector<int> view;               // source data indices; empty => plain
+    std::vector<int> view;               // source data indices, empty => plain
     bool plain = true;
     std::string out;                     // scratch for returned buffers
     std::vector<Edit> undo, redo;
@@ -70,7 +70,7 @@ extern "C" {
 __declspec(dllexport) void* gc_new(int cols, int hdr) {
     Core* c = new Core();
     c->cols = cols; c->hdr = hdr;
-    c->d.resize((size_t)hdr * cols);     // header rows start blank; loaded via gc_set_raw
+    c->d.resize((size_t)hdr * cols);     // header rows start blank, loaded via gc_set_raw
     return c;
 }
 __declspec(dllexport) void gc_free(void* h) { delete (Core*)h; }
@@ -145,7 +145,7 @@ static inline void reserve(Core* c, int n) {     // avoid the ~20 reallocations 
 }
 static inline void rec_del(Core* c, int flat, std::string& cell) {   // nw stays empty (all "")
     c->cur.idx.push_back(flat);
-    c->cur.old.push_back(std::move(cell));       // steal the cell's text; caller clears
+    c->cur.old.push_back(std::move(cell));       // steal the cell's text, caller clears
 }
 static inline void rec_set(Core* c, int flat, std::string old, std::string nw) {
     c->cur.idx.push_back(flat);
@@ -187,8 +187,8 @@ static bool has(const int* a, int n, int v) {
 }
 
 // ---- DELETE: clear grid rects (flat r1,c1,r2,c2,...), skip readonly cols/rows.
-// rows are DATA grid indices; source key = source row index. One undo entry.
-// Returns #cells changed; first cleared cell written to out_tgt (gr,col).
+// rows are DATA grid indices, source key = source row index. One undo entry.
+// Returns #cells changed, first cleared cell written to out_tgt (gr,col).
 __declspec(dllexport) int gc_delete(void* h, const int* rects, int nrects,
                                     const int* ro_cols, int n_rc,
                                     const int* ro_rows, int n_rr, int* out_tgt) {
@@ -224,10 +224,10 @@ __declspec(dllexport) int gc_delete(void* h, const int* rects, int nrects,
     return commit(c);
 }
 
-// ---- PASTE: TSV block at grid (r0,c0); plain-view materialises past data.
+// ---- PASTE: TSV block at grid (r0,c0), plain-view materialises past data.
 // Parses the raw clipboard in C++ (no Python split): trims trailing all-blank
 // rows itself and returns the block dims in out_dims[0]=rows, [1]=maxcols. ----
-// sel_nr/sel_nc = selection size; a 1x1 clipboard over a bigger selection fills it.
+// sel_nr/sel_nc = selection size, a 1x1 clipboard over a bigger selection fills it.
 __declspec(dllexport) int gc_paste(void* h, int r0, int c0, const char* text, int len,
                                    const int* ro_cols, int n_rc,
                                    const int* ro_rows, int n_rr,
@@ -346,7 +346,7 @@ __declspec(dllexport) int gc_set_cell(void* h, int gr, int col, const char* s,
     return commit(c);
 }
 
-// ---- UNDO / REDO of cell edits. Returns 1 if applied; target in out_tgt.
+// ---- UNDO / REDO of cell edits. Returns 1 if applied, target in out_tgt.
 // Copy (not move) from the log so entries survive repeated undo/redo cycles.
 __declspec(dllexport) int gc_undo(void* h, int* out_tgt) {
     Core* c = (Core*)h;
@@ -397,7 +397,7 @@ __declspec(dllexport) const char* gc_find(void* h, const char* needle, int nlen,
         return lv.find(nd) != std::string::npos;
     };
     if (scope && nscope) {
-        // dedup via a visited flag would need a set; scopes are small rects, so
+        // dedup via a visited flag would need a set, scopes are small rects, so
         // walk each rect and rely on Python passing non-overlapping scope (matches use).
         for (int s = 0; s < nscope; s += 4) {
             int r1 = scope[s], c1 = scope[s + 1], r2 = scope[s + 2], c2 = scope[s + 3];

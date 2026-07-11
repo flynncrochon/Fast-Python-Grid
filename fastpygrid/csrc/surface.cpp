@@ -1,22 +1,22 @@
 // Direct2D/DirectWrite render surface for the fastpygrid D2D backend.
 //
-// C-ABI (loaded from Python via ctypes -- no pybind11, no Python.h, so one DLL
+// C-ABI (loaded from Python via ctypes, no pybind11, no Python.h, so one DLL
 // works across every Python on the machine). The whole display list crosses the
 // boundary as ONE packed byte buffer per frame (same batching idea as the Tk
-// renderer's fgblit), decoded here into D2D draw calls -- never per-primitive
+// renderer's fgblit), decoded here into D2D draw calls, never per-primitive
 // Python->native calls, which is the cost that path exists to avoid.
 //
 // Phase 1: draw_ops() + an offscreen pixel-readback self-test entry
 // (gpu_probe_pixel). The HWND-embedding entry points come in phase 2 and reuse
-// draw_ops() unchanged -- only the render target differs (HwndRenderTarget vs
+// draw_ops() unchanged, only the render target differs (HwndRenderTarget vs
 // this WIC bitmap target).
 //
-// Op buffer wire format (little-endian; colors are 0xRRGGBB as int32, -1 = none):
-//   'R' rect : f32 x,y,w,h ; i32 fill ; i32 outline ; f32 width
-//   'L' line : f32 x1,y1,x2,y2 ; i32 color ; f32 width
-//   'P' poly : i32 color ; u16 npts ; npts*(f32 x, f32 y)   (filled, closed)
-//   'T' text : f32 x,y,w,h ; i32 color ; f32 size_px ; u8 flags(1=bold,2=center)
-//              ; u16 nchars ; nchars*u16 (UTF-16LE)
+// Op buffer wire format (little-endian, colors are 0xRRGGBB as int32, -1 = none):
+//   'R' rect : f32 x,y,w,h | i32 fill | i32 outline | f32 width
+//   'L' line : f32 x1,y1,x2,y2 | i32 color | f32 width
+//   'P' poly : i32 color | u16 npts | npts*(f32 x, f32 y)   (filled, closed)
+//   'T' text : f32 x,y,w,h | i32 color | f32 size_px | u8 flags(1=bold,2=center)
+//              | u16 nchars | nchars*u16 (UTF-16LE)
 #include <windows.h>
 #include <d2d1.h>
 #include <d2d1helper.h>
@@ -58,7 +58,7 @@ static D2D1_COLOR_F col(int32_t c) {
 
 // One trimmed, vertically-centered text format per (size, bold, center). DirectWrite
 // does the ellipsis clipping, so Python ships the full string + the cell width and the
-// GPU side elides -- no per-cell measure loop like the Tk/Qt backends need.
+// GPU side elides, no per-cell measure loop like the Tk/Qt backends need.
 static IDWriteTextFormat* get_format(float size, bool bold, bool center) {
     uint64_t key = ((uint64_t)(int)(size * 10) << 2) | (bold ? 2 : 0) | (center ? 1 : 0);
     auto it = g_formats.find(key);
@@ -118,7 +118,7 @@ static void draw_ops(ID2D1RenderTarget* rt, const uint8_t* p, size_t n) {
             bool bold = fl & 1, center = fl & 2;
             IDWriteTextFormat* f = get_format(sz, bold, center);
             // Pad scales with the font (which scales with zoom) so the text stays the
-            // same proportion of the cell at every zoom -- a fixed px pad would eat a
+            // same proportion of the cell at every zoom. A fixed px pad would eat a
             // growing fraction when zoomed out and trigger a spurious "..." trim.
             float padL = sz * (5.f / 13.f), padR = sz * (4.f / 13.f);
             D2D1_RECT_F rc = center ? D2D1::RectF(x, y, x + w, y + h)
@@ -126,7 +126,7 @@ static void draw_ops(ID2D1RenderTarget* rt, const uint8_t* p, size_t n) {
             if (f) { br->SetColor(col(c)); rt->DrawText(ws, ln, f, rc, br, D2D1_DRAW_TEXT_OPTIONS_CLIP); }
         } else if (t == 'X') {
             // scrolled text: draw left-aligned at an explicit origin x, clipped to
-            // the field rect. For a custom text field that scrolls horizontally --
+            // the field rect. For a custom text field that scrolls horizontally:
             // the layout rect is huge (no trimming), the clip does the cutting.
             float x = rf(p, i), y = rf(p, i), w = rf(p, i), h = rf(p, i);
             float ox = rf(p, i); int c = ri(p, i); float sz = rf(p, i); uint16_t ln = ru(p, i);
@@ -140,23 +140,23 @@ static void draw_ops(ID2D1RenderTarget* rt, const uint8_t* p, size_t n) {
                 rt->PopAxisAlignedClip();
             }
         } else {
-            break;   // unknown tag: corrupt buffer, stop rather than run off the end
+            break;   // unknown tag (corrupt buffer), stop rather than run off the end
         }
     }
     if (br) br->Release();
 }
 
 // --- live HWND path (phase 2): a WS_CHILD window with an HwndRenderTarget,
-// parented into the Tk frame. Same draw_ops() as the self-test; only the target
+// parented into the Tk frame. Same draw_ops() as the self-test, only the target
 // differs. Its WndProc runs on Tk's own message pump (same thread), so no
-// separate loop -- phase 3 will translate its input messages back to Python. ---
+// separate loop. Phase 3 will translate its input messages back to Python. ---
 struct Surface { HWND hwnd; ID2D1HwndRenderTarget* rt; };
 static const wchar_t* WCLASS = L"FastGridD2DSurface";
 
 static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
-    if (m == WM_ERASEBKGND) return 1;              // we own every pixel; no GDI erase flicker
+    if (m == WM_ERASEBKGND) return 1;              // we own every pixel, no GDI erase flicker
     if (m == WM_PAINT) { ValidateRect(h, nullptr); return 0; }  // present happens in gpu_render
-    // Transparent to hit-testing so mouse falls through to the Tk parent frame --
+    // Transparent to hit-testing so mouse falls through to the Tk parent frame.
     // Tk then delivers <Button>/<Motion>/<MouseWheel>/<Key> like any widget, and the
     // host reuses the Tk renderer's event wiring instead of a native input bridge.
     if (m == WM_NCHITTEST) return HTTRANSPARENT;
@@ -165,7 +165,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 
 // Force 96 DPI (1 unit == 1 physical pixel). The geometry is already pre-scaled to
 // physical px in Python (like the Tk canvas), and Tk mouse events are in physical
-// px too -- so the target must NOT re-apply the desktop DPI, or draws land at 2x on
+// px too, so the target must NOT re-apply the desktop DPI, or draws land at 2x on
 // a 200% display and the selection/dividers offset + thicken vs where you clicked.
 static D2D1_RENDER_TARGET_PROPERTIES rt_props() {
     return D2D1::RenderTargetProperties(
@@ -193,7 +193,7 @@ void* gpu_attach(void* parent, int w, int h) {
     if (w < 1) w = 1;
     if (h < 1) h = 1;
     // WS_CLIPSIBLINGS: the D2D Present must NOT paint over sibling Tk widgets
-    // stacked above it (the in-cell editor Entry) -- without it the editor flickers
+    // stacked above it (the in-cell editor Entry). Without it the editor flickers
     // away under the surface. HTTRANSPARENT already lets input reach the editor.
     HWND ch = CreateWindowExW(0, WCLASS, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
                               0, 0, w, h, (HWND)parent, nullptr,
@@ -249,7 +249,7 @@ void gpu_detach(void* sp) {
 
 // Self-test: render ops to an offscreen WIC bitmap and return the ARGB of one pixel
 // (0xAARRGGBB). Lets Python assert the draw path is pixel-correct with no window.
-// 0xDEADnnnn returns are init failures. NOT the live render path.
+// 0xDEADnnnn returns are init failures. Not the live render path.
 extern "C" __declspec(dllexport)
 unsigned int gpu_probe_pixel(const uint8_t* ops, int n, int w, int h, int px, int py) {
     if (!ensure_factories()) return 0xDEAD0001;

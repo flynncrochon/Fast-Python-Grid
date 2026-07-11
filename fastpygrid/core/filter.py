@@ -13,13 +13,13 @@ class FilterController:
     def __init__(self, model, col):
         self.model = model
         self.col = col
-        self.state = None          # v -> bool user toggles; None until load()
+        self.state = None          # v -> bool user toggles, None until load()
         self.active = None         # the column's active filter set, or None
         self.preloaded = []        # distinct preview (may be capped)
         self.capped = False
 
     def load(self):
-        """Deferred distinct scan -- run on the next event-loop tick so opening the
+        """Deferred distinct scan, run on the next event-loop tick so opening the
         popup is instant even on a 1M-row column."""
         self.active = self.model._filters.get(self.col)
         self.preloaded, self.capped = self.model.distinct_capped(self.col)
@@ -57,7 +57,7 @@ class FilterController:
     def commit(self, query):
         """Apply the popup on OK. With a search query: too-many -> "contains",
         else filter TO the checked matches. Empty query: clear when everything's
-        checked and we truly know it's everything, else keep exactly the checked."""
+        checked and we know it's everything, else keep exactly the checked."""
         query = query.strip()
         if query:
             rows = self.rows(query)

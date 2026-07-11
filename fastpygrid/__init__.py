@@ -1,4 +1,4 @@
-"""fastpygrid — a fast grid split into a GUI-free core and thin toolkit hosts.
+"""fastpygrid: a fast grid split into a GUI-free core and thin toolkit hosts.
 
     core/        model + geometry + selection + paint() + the Direct2D engine (gpu.py)
     render/      tk.py (tkinter host) · qt.py (PySide6 host)
