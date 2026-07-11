@@ -1,0 +1,38 @@
+[build-system]
+requires = ["scikit-build-core>=0.10"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "fastpygrid"
+version = "0.1.0"
+description = "Fast, GPU-painted spreadsheet grid for tens of thousands of rows (Windows, Direct2D)."
+readme = "README.md"
+requires-python = ">=3.8"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Flynn Crochon" }]
+keywords = ["grid", "spreadsheet", "table", "gpu", "direct2d", "tkinter", "qt"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Developers",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: User Interfaces",
+]
+dependencies = []
+
+[project.optional-dependencies]
+qt = ["PySide6"]
+
+[project.urls]
+Homepage = "https://github.com/flynncrochon/Fast-Python-Grid"
+Repository = "https://github.com/flynncrochon/Fast-Python-Grid"
+
+[tool.scikit-build]
+# The whole package (both .py and the two DLLs) is produced by CMake install(),
+# so disable scikit-build-core's own pure-python discovery.
+wheel.packages = []
+# The native bits load via ctypes (not a CPython extension), so one wheel works
+# on any Python 3.x -- tag it py3, not cp38/cp39/...
+wheel.py-api = "py3"
