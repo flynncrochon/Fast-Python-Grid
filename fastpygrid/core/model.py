@@ -152,7 +152,7 @@ class GridModel:
 
     def _sort_by_color(self, rows, col, ascending, which, color):
         """Bring the rows whose `col` cell has `which` color == `color` to the top
-        (ascending) or bottom, keeping each group's original order -- like spreadsheet's
+        (ascending) or bottom, keeping each group's original order -- a
         single-color sort. color=None targets uncolored ('No Fill'/'Automatic')."""
         match = [r for r in rows if self._cell_color(r, col, which) == color]
         rest = [r for r in rows if self._cell_color(r, col, which) != color]
@@ -459,7 +459,7 @@ class GridModel:
 
     def set_color_sort(self, col, which, color, ascending=True):
         """Bring the `which` ('fg'/'bg') == `color` rows of `col` to the top
-        (color=None = uncolored). Like spreadsheet's sort-by-color single pick."""
+        (color=None = uncolored). A sort-by-color single pick."""
         self._sort = (col, ascending, which, color)
         self._after_view_change()
 
@@ -610,7 +610,7 @@ class GridModel:
 
     def _clamp_target(self, rng):
         # rng is a view rect (r1,c1,r2,c2) -- the cells an undo/redo touched, so the
-        # selection lands back on them (spreadsheet). A sorted/filtered-column edit can
+        # selection lands back on them. A sorted/filtered-column edit can
         # reorder rows so it lands near-but-not-exact. Source-remap if it matters.
         if rng is None:
             return None
@@ -791,7 +791,7 @@ class GridModel:
         if not text:
             return []
         # Jira/Confluence/browser tables land on the clipboard as an HTML <table>
-        # (what spreadsheet reads); their plain-text flavor collapses each cell onto its
+        # (the rich form); their plain-text flavor collapses each cell onto its
         # own line and is unrecoverable. Prefer the table when the host handed it over.
         head = text[:64].lstrip().lower()
         if head[:8] == "version:" or head[:1] == "<":   # CF_HTML header or raw HTML
@@ -800,7 +800,9 @@ class GridModel:
                 while rows and not any(c.strip() for c in rows[-1]):
                     rows.pop()
                 return rows
-        rows = list(csv.reader(StringIO(text), csv.excel_tab if "\t" in text else csv.excel))
+        # default reader dialect handles commas + quoting; tab data just swaps the delimiter
+        reader = csv.reader(StringIO(text), delimiter="\t") if "\t" in text else csv.reader(StringIO(text))
+        rows = list(reader)
         while rows and not any(c.strip() for c in rows[-1]):
             rows.pop()
         return rows
@@ -962,7 +964,7 @@ if __name__ == "__main__":   # headless check of diff-based undo/redo
     fm.set_cell(1, 0, "Zoe")                                      # Alice -> Zoe: invalidates
     assert fm.find_matches("alice") == ([], False)               # gone, no stale hit
 
-    # filter/sort is undoable like an edit (spreadsheet), interleaved with cell edits
+    # filter/sort is undoable like an edit, interleaved with cell edits
     fu = GridModel(["A"], [["x"], ["y"], ["x"]])
     fu.set_filter(0, {"x"})
     assert fu.has_filter(0)

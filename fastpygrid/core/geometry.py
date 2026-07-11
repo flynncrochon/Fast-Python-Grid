@@ -12,7 +12,7 @@ from itertools import accumulate
 
 
 class Geometry:
-    MAX_COLS = 16384          # spreadsheet's last column is XFD (16384); uncapped scroll stops there
+    MAX_COLS = 16384          # column cap (the classic spreadsheet limit); uncapped scroll stops there
     def __init__(self, col_w, frozen=0, gutter_w=56, row_h=22, hdr_rows=1,
                  uncap_rows=False, uncap_cols=False):
         # uncap_*: let the view scroll past the last row/col into empty space
@@ -124,7 +124,7 @@ class Geometry:
             base = self.col_left(self.used_cols) - self.frozen_w()
         avail = self.w - self.freeze_x()
         grown = max(base, self.scroll_x + avail) + self._phantom_w()
-        cap = self.col_left(self.MAX_COLS) - self.frozen_w()   # XFD's right edge -- spreadsheet stops here
+        cap = self.col_left(self.MAX_COLS) - self.frozen_w()   # right edge of the 16384-column cap
         return min(grown, cap)
 
     def max_top(self, nrows):
@@ -140,7 +140,7 @@ class Geometry:
     def visible_data_rows(self, nrows):
         """Visible DATA grid rows; the header rows are always pinned. Uncapped:
         keeps filling the viewport past the data with phantom (blank) rows, so the
-        gutter keeps numbering like spreadsheet."""
+        gutter keeps numbering, spreadsheet-style."""
         hi = self.top_row + self.vis_rows()
         if not self.uncap_rows:
             hi = min(hi, nrows)
@@ -157,7 +157,7 @@ class Geometry:
                 out.append(c)
             c += 1
         if self.uncap_cols:                          # phantom columns fill the overscroll
-            c, pw = max(c, ncols), self._phantom_w()  # (empty, lettered, like spreadsheet; capped at XFD)
+            c, pw = max(c, ncols), self._phantom_w()  # (empty, lettered, spreadsheet-style; capped at 16384)
             while c < self.MAX_COLS:
                 x = self.col_x(c)
                 if x >= self.w:
@@ -317,7 +317,7 @@ if __name__ == "__main__":   # overscroll clamp / extent self-check (no toolkit)
     vc = g2.visible_cols(2)                 # only 2 real columns
     assert vc and max(vc) > 2, vc           # columns lettered past the data
     assert g2.col_width(50) == g2._phantom_w() and g2.col_x(4) > g2.col_x(3)
-    # uncapped columns stop at spreadsheet's XFD (16384): can't scroll or hit past it
+    # uncapped columns stop at the 16384-column cap: can't scroll or hit past it
     g2.scroll_x = 10**9; g2.clamp(5)
     assert g2.x_to_col(g2.w - 1, 2) <= Geometry.MAX_COLS - 1
     assert max(g2.visible_cols(2)) <= Geometry.MAX_COLS - 1

@@ -635,7 +635,7 @@ class GpuEngine:
                                or (arrow and f["flyout"] and key.startswith(f["flyout"])))  # lit while open
             cv.rect(x + pad, cy, W - 2 * pad, rh - 2, fill=_PANEL_HI if hov else _PANEL_SUB)
             cv.text(x + pad, cy, W - 2 * pad, rh, label, _PANEL_FG if enabled else "#7d786e")
-            if arrow:                                          # spreadsheet-style submenu affordance
+            if arrow:                                          # submenu affordance
                 cv.text(x + W - round(18 * s), cy, round(12 * s), rh,
                         "›", _PANEL_FG if enabled else "#7d786e", center=True)
             lay[key] = (x + pad, cy, W - 2 * pad, rh, enabled)
@@ -713,7 +713,7 @@ class GpuEngine:
         cv.fpx = saved_fpx                                   # restore for later overlays
 
     def _draw_flyout(self, cv, x, y, W, H, rh, pad, s):
-        """spreadsheet-style submenu to the right of the popup: swatches grouped under
+        """Submenu to the right of the popup: swatches grouped under
         'by Cell Color' / 'by Font Color', plus No Fill / Automatic (uncolored)."""
         f = self._filter
         kind = f["flyout"]                                    # 'sort' | 'filter'
@@ -832,7 +832,7 @@ class GpuEngine:
                     if self._in(lo.get(k), x, y)), None)     # button hover
         # Color submenu: hovering a ▸ item opens (or switches) it; it stays open while
         # the cursor is over the flyout itself, and closes the moment it moves onto any
-        # other section of the popup (spreadsheet behaviour).
+        # other section of the popup.
         fly, hoverfly = None, None
         if btn in ("sortcolor", "filtercolor") and lo[btn][4]:
             fly = "sort" if btn == "sortcolor" else "filter"
@@ -1176,7 +1176,7 @@ class GpuEngine:
         r, c = ed["cell"]
         text = ed["tf"].text
         if text.strip():                 # typing past the last column grows the sheet
-            self.ctl.ensure_col(c)       # (empty commit adds nothing, like spreadsheet)
+            self.ctl.ensure_col(c)       # (an empty commit adds nothing)
         self.model.set_cell(r, c, text)
         self._editor = None
         self.host.focus()                         # next keystroke edits again

@@ -91,7 +91,7 @@ def resolve_drag(drag_region, row, col, *, top_hrow, last_row, last_col, anchor)
 
 def edge_reveal_col(col, *, anchor_col, frozen_cols, scroll_x, ncols,
                     pointer_x, gutter_w, frozen_w, body_w, leaf_x):
-    """spreadsheet frozen-pane crossing for a horizontal cell drag.
+    """Frozen-pane crossing for a horizontal cell drag.
 
     With no frozen columns (``frozen_cols <= 0``) this is a no-op and returns
     ``col`` unchanged — that's how a grid with no frozen columns shares
@@ -121,7 +121,7 @@ def edge_reveal_col(col, *, anchor_col, frozen_cols, scroll_x, ncols,
 
 
 def edge_scan(start, step, lo, hi, occupied):
-    """spreadsheet Ctrl+arrow target along one axis. ``occupied(i)`` reports whether
+    """Ctrl+arrow target along one axis. ``occupied(i)`` reports whether
     cell ``i`` holds a value. From a filled run, stop at its last filled cell
     before a gap; from a gap or block edge, jump to the next filled cell (or the
     boundary if none)."""
@@ -146,7 +146,7 @@ def resolve_arrow(key, *, active, anchor, top_hrow, last_row, last_col,
     Header bands are normal selectable cells, so moving up clamps to ``top_hrow``
     (reaching a header band one row at a time) and the freeze never blocks the
     cursor. Ctrl moves to an edge: with an ``occupied_*`` callback that edge is an
-    spreadsheet data-block jump (a dense matrix); without one it jumps to the grid
+    data-block jump (a dense matrix); without one it jumps to the grid
     boundary (a read-only grid, where empty cells are normal).
     Shift extends the active range from the anchor, collapsing any disjoint
     ranges; a plain move resets the selection to the new cell.
