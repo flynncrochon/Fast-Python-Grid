@@ -40,7 +40,7 @@ def edit_colors(gr, hdr_rows=1):
 
 
 def column_label(col):
-    """spreadsheet column letters: 0 -> A, 25 -> Z, 26 -> AA, …"""
+    """Column letters: 0 -> A, 25 -> Z, 26 -> AA, …"""
     label, col = "", col + 1
     while col:
         col, rem = divmod(col - 1, 26)
@@ -127,7 +127,7 @@ def paint(model, geom, active, ranges, hover_corner=False):
                 else:
                     bg = base if base else (T.ZEBRA if zeb else T.BG)
                 dl.cells.append((x, y, cw, g.row_h, model.cell(gr, c), bg, fg, flags))
-                # always-visible drop button on every dropdown cell (spreadsheet data-validation
+                # always-visible drop button on every dropdown cell (data-validation
                 # style). Carries the CELL rect: the renderer draws the button at its right.
                 if is_drop_col and cell_choices(gr, c) is not None:
                     dl.overlays.append(("dropdown", x, y, cw, g.row_h))

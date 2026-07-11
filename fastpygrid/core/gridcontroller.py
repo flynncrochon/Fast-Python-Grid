@@ -1,6 +1,6 @@
 """Toolkit-neutral grid controller: owns the selection state machine and turns
 normalized input events into core calls. Shared by the Tk and Qt renderers --
-selection/anchor, click+drag selection (incl. spreadsheet frozen-pane crossing),
+selection/anchor, click+drag selection (incl. frozen-pane crossing),
 keyboard nav/copy/paste/undo, column drag-resize + dbl-click autofit, and
 Ctrl+wheel zoom.
 
@@ -134,7 +134,7 @@ class GridController:
         col = g.x_to_col(x, ncols)
         if col is None:
             col = g.frozen if x < g.gutter_w else ncols - 1
-        # spreadsheet frozen-pane crossing: dragging left past the freeze line targets the
+        # frozen-pane crossing: dragging left past the freeze line targets the
         # scrollable column hidden under the frozen block (scroll-into-view reveals
         # it, one per motion) instead of snapping onto a pinned frozen column.
         col = S.edge_reveal_col(col, anchor_col=self.anchor[1], frozen_cols=g.frozen,
@@ -300,7 +300,7 @@ class GridController:
 
     def context_select(self, x, y):
         """Right-click: select the cell under the cursor unless it's already inside
-        the selection (spreadsheet keeps a multi-cell selection when you right-click in it)."""
+        the selection (a multi-cell selection is kept when you right-click inside it)."""
         region, row, col = self.geom.hit(x, y, self.model.nrows(), self.model.ncols)
         if region != "cell" or row is None or col is None or self._in_selection(row, col):
             return

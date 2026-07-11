@@ -77,7 +77,7 @@ __declspec(dllexport) void gc_free(void* h) { delete (Core*)h; }
 
 __declspec(dllexport) int gc_ndata(void* h) { return ((Core*)h)->ndata(); }
 
-// Grow the COLUMN count (spreadsheet-style: editing a cell past the last column extends
+// Grow the COLUMN count (editing a cell past the last column extends
 // the sheet). Re-strides the row-major buffer -- every row gains blank trailing
 // cells -- and remaps the undo/redo flat indices (row*cols+col) to the new stride
 // so history survives the widen. No-op if new_cols <= cols. No undo entry itself.

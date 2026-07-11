@@ -2,7 +2,7 @@
 
 The one copy of "what does a click / drag / arrow do" lives in
 core/selection.py and drives BOTH renderers -- so this asserts it directly,
-with no GUI. spreadsheet semantics: plain click resets, Ctrl banks a range, Shift
+with no GUI. Spreadsheet semantics: plain click resets, Ctrl banks a range, Shift
 extends, whole-row/col/select-all, Ctrl+arrow block jumps.
 
     python scripts/tests/check_select.py
