@@ -163,7 +163,7 @@ class GpuCanvas:
     primitive (the Python->native boundary is the cost worth avoiding)."""
 
     def __init__(self, fpx, scale=1.0):
-        self.fpx = float(fpx)          # cell-text pixel size; glyph() carries its own
+        self.fpx = float(fpx)          # cell-text pixel size, glyph() carries its own
         self.s = scale
         self.buf = bytearray()
 
@@ -1195,7 +1195,7 @@ class GpuEngine:
     def set_zoom_fonts(self, z):
         # No 9px floor and no int rounding here: col_w/row_h scale linearly with z,
         # so the GPU cell font must too, exactly, or it's a hair too big for the cell
-        # and DirectWrite trims it to "…". Keep _fpx a float for the D2D text op; only
+        # and DirectWrite trims it to "…". Keep _fpx a float for the D2D text op, only
         # the Qt/Tk host fonts (used for measuring/editing) need an int.
         self._fpx = max(1.0, self._base_fpx * z)
         self.host.set_zoom_px(max(1, round(self._fpx)))
@@ -1231,7 +1231,7 @@ class GpuEngine:
         self.ctl.on_release()
 
     def motion(self, x, y):
-        if self._dropdown:                     # reset: the trigger ▼ left a hand cursor;
+        if self._dropdown:                     # reset: the trigger ▼ left a hand cursor,
             self._set_cursor(""); self._dropdown_hover(x, y); return   # the popup itself is default
         if self._filter:
             self._set_cursor(""); self._filter_hover(x, y); return
@@ -1281,7 +1281,7 @@ class GpuEngine:
 
     def _edge_scroll(self, x, y):
         """(row_delta, px_delta) for one autoscroll tick, or (0, 0) if the pointer
-        isn't past an edge. Gentle (1 unit) right at the edge; accelerates 1 unit per
+        isn't past an edge. Gentle (1 unit) right at the edge, accelerates 1 unit per
         row_h the pointer is held PAST the body edge, so slow near it, fast on a push."""
         g = self.geom
         rh = max(1, g.row_h)
@@ -1328,7 +1328,7 @@ class GpuEngine:
         g.clamp(self.model.nrows())
         if (g.top_row, g.scroll_x) == before:            # capped at the data edge: stop ticking
             return
-        self.ctl.on_drag(x, y, follow=False)             # extend the selection; the tick already scrolled
+        self.ctl.on_drag(x, y, follow=False)             # extend the selection, the tick already scrolled
         self._autoscroll_after = self.host.after(self._AUTOSCROLL_MS, self._autoscroll_tick)
 
     def wheel(self, notches):                          # notches > 0 = scroll up
@@ -1470,7 +1470,7 @@ class GpuEngine:
         return False
 
     def _sb_hover(self, x, y):
-        """Update thumb hover flags; return True if the pointer is over a scrollbar."""
+        """Update thumb hover flags. Return True if the pointer is over a scrollbar."""
         vh = self._in_rect(self._vsb["thumb"], x, y)
         hh = self._in_rect(self._hsb["thumb"], x, y)
         if vh != self._vsb["hover"] or hh != self._hsb["hover"]:
@@ -1504,17 +1504,17 @@ def _selftest():
 
     lib = _load_lib()
     if lib is None:
-        print("surface.dll not built -- run build.bat, then import from dist\\fastpygrid")
+        print("surface.dll not built. Run build.bat, then import from dist\\fastpygrid")
         return 1
 
-    # A: color/decode correctness -- one opaque rect, read the pixel back exactly.
+    # A: color/decode correctness: one opaque rect, read the pixel back exactly.
     cv = GpuCanvas(13)
     cv.rect(0, 0, 60, 40, fill="#3366cc")
     got = lib.gpu_probe_pixel(bytes(cv.buf), len(cv.buf), 64, 48, 10, 10)
     assert got == 0xFF3366CC, "rect color: got %08X want FF3366CC" % got
 
-    # B: full pipeline -- real model through paint()->blit()->GpuCanvas. Probe a
-    # data-cell interior; it must be painted (not the black clear sentinel).
+    # B: full pipeline: real model through paint()->blit()->GpuCanvas. Probe a
+    # data-cell interior, it must be painted (not the black clear sentinel).
     model = GridModel(["A", "B", "C"], [["x", "y", "z"], ["1", "2", "3"]])
     g = Geometry([120, 120, 120], 0, hdr_rows=model.header_rows)
     g.w, g.h = 400, 200
@@ -1527,7 +1527,7 @@ def _selftest():
     assert (got >> 24) == 0xFF and got != 0xFF000000, \
         "data cell not painted: got %08X at (%d,%d)" % (got, px, py)
 
-    print("ok  (rect color exact; full paint->blit->Gpu pipeline renders)")
+    print("ok  (rect color exact, full paint->blit->Gpu pipeline renders)")
     return 0
 
 
