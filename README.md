@@ -12,11 +12,11 @@ holds the logic. One Direct2D engine draws it, under a thin Tk or Qt host.
 
 | Requirement | Details |
 |---|---|
-| **Windows only** | The renderer is Direct2D (`core/surface.dll`): needs Windows and a Direct3D 11 GPU (falls back to the WARP software device if there's none). No macOS/Linux backend. |
+| **Windows only** | The renderer is Direct2D (`core/surface.dll`): needs Windows. No macOS/Linux backend. |
 | **Python 3.8+** | |
 | **Tk host** | Standard library only (`tkinter`). |
 | **Qt host** | Needs `PySide6` (`pip install PySide6`), the only dependency, and only for the Qt host. |
-| **Native DLLs** | The wheel bundles two compiled DLLs. `surface.dll` draws the Direct2D surface and `gridcore.dll` is an optional C++ data core (falls back to pure Python if missing). Building them from source needs CMake + MSVC. |
+| **Native DLLs** | The wheel bundles `surface.dll` (Direct2D renderer) and `gridcore.dll` (C++ data core). Both required; build from source needs CMake + MSVC. |
 
 ## Install
 
@@ -50,19 +50,16 @@ win.mainloop()                                          # aliases app.exec()
 
 ## Interface
 
-The library is two things: `make_sheet()`, which opens a window, and the
-`GridModel` it returns, which you call to style cells, add dropdowns or draw
-dividers. Both hosts (`fastpygrid.render.tk` and `fastpygrid.render.qt`) expose
-the same `make_sheet`.
+`make_sheet()` (in both `fastpygrid.render.tk` and `fastpygrid.render.qt`) opens a
+window and returns a `GridModel` for styling cells, dropdowns and dividers.
 
-Coordinates: `col` is a 0-based column index. `gr` is a **grid row**, where rows
-`0 .. header_rows-1` are the header and everything from `header_rows` on is data.
-With one header row, the first data row is `gr=1`. You never touch pixels.
+`col` is 0-based. `gr` is a **grid row** where rows `0 .. header_rows-1`
+are the header and data starts at `gr=header_rows` (so `gr=1` with one header row).
 
 ### `make_sheet(headers, rows, ...)`
 
-Builds the model, opens the window, returns it. Raises `RuntimeError` if the
-Direct2D surface can't be created (DLL missing or no D3D device).
+Builds the model, opens the window, returns it. Raises `RuntimeError` if a required
+native DLL (`surface.dll` or `gridcore.dll`) is missing.
 
 | Argument | Type | Default | What it does |
 |---|---|---|---|
