@@ -1,14 +1,17 @@
 name: publish
 
-# Build the Windows wheel + sdist, then publish to PyPI when a GitHub Release is
-# published (or run manually). Uses PyPI Trusted Publishing (OIDC) -- no token.
+# Build the Windows + Linux wheels and the sdist, then publish to PyPI when a
+# GitHub Release is published (or run manually). Uses PyPI Trusted Publishing
+# (OIDC) -- no token. Wheels are ctypes-loaded and tagged py3 (one per platform,
+# not per Python version), so a single build per OS covers all Python 3.x.
 on:
   release:
     types: [published]
   workflow_dispatch:      # adds a manual "Run workflow" button in the Actions tab
 
 jobs:
-  build:
+  # Windows wheel + the sdist (only this job builds the sdist, so it's unique).
+  build-windows:
     runs-on: windows-latest        # needs MSVC + CMake to compile the DLLs (preinstalled)
     steps:
       - uses: actions/checkout@v5
@@ -21,19 +24,45 @@ jobs:
           python -m build
       - uses: actions/upload-artifact@v5
         with:
-          name: dist
+          name: dist-windows
           path: dist/*
 
+  # Linux wheel, built inside a manylinux container so glibc is old enough for
+  # PyPI, then repaired to a manylinux tag. GL/X11 are the user's display + GPU
+  # driver -- keep them as system deps (--exclude). FreeType IS bundled.
+  build-linux:
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux_2_28_x86_64
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install native link deps (GL/X11/FreeType headers)
+        run: yum install -y mesa-libGL-devel libX11-devel freetype-devel
+      - name: Build + repair wheel
+        run: |
+          PYBIN=/opt/python/cp312-cp312/bin
+          "$PYBIN/pip" install --upgrade build auditwheel
+          "$PYBIN/python" -m build --wheel        # scikit-build-core pulls cmake/ninja itself
+          "$PYBIN/python" -m auditwheel repair dist/*.whl -w wheelhouse \
+            --exclude libGL.so.1 --exclude libGLdispatch.so.0 --exclude libGLX.so.0 \
+            --exclude libOpenGL.so.0 --exclude libX11.so.6 --exclude libXext.so.6 \
+            --exclude libxcb.so.1
+      - uses: actions/upload-artifact@v5
+        with:
+          name: dist-linux
+          path: wheelhouse/*.whl
+
   publish:
-    needs: build
+    needs: [build-windows, build-linux]
+    if: github.event_name == 'release'   # manual dispatch = build-only test; releases publish
     runs-on: ubuntu-latest         # gh-action-pypi-publish only runs on Linux
     permissions:
       id-token: write              # required for Trusted Publishing
     steps:
       - uses: actions/download-artifact@v5
         with:
-          name: dist
+          pattern: dist-*          # gather both build jobs' artifacts
           path: dist
+          merge-multiple: true     # flatten into one dist/ dir
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true       # don't fail if this version was already uploaded
