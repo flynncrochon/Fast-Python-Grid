@@ -39,7 +39,13 @@ def test_lines_and_readonly():
     # grid lines + readonly flags
     assert m.vlines() == {} and m.hlines() == {}
     m.set_vline(0); m.set_hline(1, width=4)
-    assert m.vlines() == {0: None} and m.hlines() == {1: 4}   # None = theme default width
+    assert m.vlines() == {0: None} and m.hlines() == {0: 4}   # hline keyed by SOURCE row; None = theme default
+    assert m.hline_width(1) == 4 and m.hline_width(2) is m._NO_HLINE
+    # divider follows its row through a sort: source row 0 ([x,p]) moves to the
+    # bottom under a descending sort of col 0 (z, y, x, x) -> grid row 3.
+    m.set_sort(0, ascending=False)
+    assert m.hline_width(3) == 4 and m.hline_width(1) is m._NO_HLINE
+    m.clear_sort()
     m.set_vline(0, on=False); assert m.vlines() == {}
     m.set_readonly_col(0); assert m.col_readonly(0)
     m.set_readonly_col(0, on=False); assert not m.col_readonly(0)

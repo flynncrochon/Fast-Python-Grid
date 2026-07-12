@@ -9,7 +9,7 @@ timing one real frame per autoscroll step. Unlike benchmark_interactive's fast-s
 so every frame both scrolls and grows the selection. We report p50/p95/max per phase
 and the final selection extent, to prove it really went off-screen huge.
 
-Run:  python demos/benchmark_bigselect.py       (add FASTPYGRID_VSYNC=0 for uncapped)
+Run:  python benchmarks/benchmark_bigselect.py       (add FASTPYGRID_VSYNC=0 for uncapped)
 Needs the DLLs built (build.bat) into fastpygrid/core/.
 """
 import gc

@@ -7,7 +7,7 @@ state exactly as a mouse wheel / press+drag would, then renders one real frame a
 records its time. Smoothness is a worst-case property, so we report p50 / p95 / max
 per phase (a single 40 ms hitch matters more than a great average).
 
-Run:  python demos/benchmark_interactive.py
+Run:  python benchmarks/benchmark_interactive.py
 Needs the DLLs built (build.bat) into fastpygrid/core/.
 """
 import gc
