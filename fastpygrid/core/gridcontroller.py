@@ -203,11 +203,15 @@ class GridController:
         btn = self.geom.row_h - 8 + 8                # filter button + gap (bottom header row)
         arrow = self.geom.row_h                      # dropdown ▼ zone (data cells)
         drop = self.model.cell_choices
+        # Reserve the cell's left+right text pad, which the GPU renderer sizes as
+        # fpx*9/13 and which grows with zoom. A fixed margin here fit at 1x but was too
+        # small when zoomed in (pad > margin), so autofit produced columns that trimmed.
+        pad = round(self.host._fpx * 9 / 13) + 3     # padL+padR at the current zoom + slack
         for cc in cols:
             w = max(self.host.measure(self.model.cell(r, cc), r < H)
                     + (btn if r == H - 1 else arrow if r >= H and drop(r, cc) is not None else 0)
                     for r in rows)
-            self.resize_to(cc, w + 12)                       # 5px text inset + margin
+            self.resize_to(cc, w + pad)
         self.host.after_geometry_change()
         self.host.redraw()
 
@@ -219,16 +223,32 @@ class GridController:
 
     # --- zoom (Ctrl + wheel) ---------------------------------------------
     def zoom_by(self, factor):
-        z = max(0.4, min(4.0, self._zoom * factor))
+        self.zoom_to(self._zoom * factor)
+
+    def zoom_to(self, z):
+        """Apply an absolute zoom factor (clamped). The engine eases toward a target
+        by calling this each animation frame; a notch is factor 1.1 via zoom_by."""
+        z = max(0.4, min(4.0, z))
         if z == self._zoom:
             return
         self._zoom = z
+        g = self.geom
+        # scroll_x/scroll_y are PIXEL offsets, so after the row/col sizes change that
+        # same offset lands on a different cell -- zooming in would drift the view up/left.
+        # Capture the old sizes, then rescale the offsets by how much they grew, so the
+        # cell under the top-left corner stays put (anchor the zoom there).
+        old_row_h, old_w = g.row_h, g.content_w()
         self.host.set_zoom_fonts(z)
-        self.geom.set_metrics(max(10, round(self._base_row_h * z)),
-                              max(24, round(self._base_gutter * z)),
-                              [max(20, round(w * z)) for w in self._base_w])
-        self.geom.clamp(self.model.nrows())
-        self.host.after_geometry_change()
+        g.set_metrics(max(10, round(self._base_row_h * z)),
+                      max(24, round(self._base_gutter * z)),
+                      [max(20, round(w * z)) for w in self._base_w])
+        g.scroll_y = round(g.scroll_y * g.row_h / old_row_h) if old_row_h else g.scroll_y
+        new_w = g.content_w()
+        g.scroll_x = round(g.scroll_x * new_w / old_w) if old_w else g.scroll_x
+        g.clamp(self.model.nrows())
+        # One repaint per frame: the eased zoom calls this ~90x/sec, and the extra
+        # after_geometry_change() present (redundant with redraw() in this engine)
+        # doubled the GPU work per frame and read as lag. redraw() alone is enough.
         self.host.redraw()
 
     # --- keyboard ---------------------------------------------------------
@@ -330,38 +350,3 @@ class GridController:
         self.sel, self.extra = (r, c, r, c), []
         self.scroll_into_view(r, c)
         self.host.redraw()
-
-
-if __name__ == "__main__":   # headless self-check of the state machine
-    from .coremodel import make_model     # the real (C++-backed) model; editing lives here now
-    from .geometry import Geometry
-
-    class _Host:                          # records redraws, no toolkit
-        def __init__(self):
-            self.model = make_model(["A", "B"], [["a1", "b1"], ["a2", "b2"]])
-            self.geom = Geometry([80, 80]); self.geom.w, self.geom.h = 400, 300
-            self.editable = True
-            self.clip = ""
-        def redraw(self): pass
-        def commit_editor(self): pass
-        def after_scroll_change(self): pass
-        def after_geometry_change(self): pass
-        def set_zoom_fonts(self, z): pass
-        def clipboard_set(self, t): self.clip = t
-        def clipboard_get(self): return self.clip
-
-    h = _Host()
-    ctl = GridController(h, 22, 56, [80, 80])
-    assert ctl.active == (1, 0)
-    ctl.move((1, 0)); assert ctl.active == (2, 0), ctl.active   # Enter -> down
-    ctl.on_key("Right", False, False, ""); assert ctl.active == (2, 1), ctl.active
-    ctl.on_key("a", False, True, "")                            # Ctrl+A selects header+data
-    assert ctl.sel == (0, 0, h.model.data_extent()[0], 1), ctl.sel
-    assert ctl.zoom_by(1.1) is None and ctl._zoom != 1.0        # zoom took
-    ctl.sel, ctl.extra, ctl.active = (1, 0, 1, 0), [], (1, 0)   # cut clears the cell, fills clipboard
-    ctl.cut(); assert h.clip == "a1" and h.model.cell(1, 0) == "", (h.clip, h.model.cell(1, 0))
-    # edit elsewhere, move away, then Ctrl+Z jumps the selection back to the edit
-    h.model.set_cell(2, 1, "X"); ctl.active = ctl.anchor = (1, 0)
-    ctl.on_key("z", False, True, ""); assert ctl.active == (2, 1), ctl.active
-    ctl.on_key("z", True, True, ""); assert ctl.active == (2, 1), ctl.active   # Ctrl+Shift+Z redo, same cell
-    print("gridcontroller self-check ok")

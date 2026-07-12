@@ -1,7 +1,6 @@
 """Ctrl+F find controller -- GUI-free search/navigation over model.find_matches.
 
-Both the Tk and Qt find bars drive this identical logic. Only the surrounding
-widgets differ:
+The GpuEngine find bar drives this logic:
 
   * highlight every matching cell (lazy, via model find-state) + a distinct
     active-match marker,

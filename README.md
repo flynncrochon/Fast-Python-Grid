@@ -2,9 +2,9 @@
   <img src="docs/logo.svg" alt="Fast Python Grid" width="420">
 </p>
 
-A GPU-painted spreadsheet grid for tens of thousands of rows. Only visible cells
+An OpenGL spreadsheet grid for tens of thousands of rows. Only visible cells
 are built, so scroll, select, filter and find stay instant. A GUI-free core
-holds the logic. One Direct2D engine draws it, under a thin Tk or Qt host.
+holds the logic, under a thin Tk or Qt host.
 
 ![fastpygrid sample grid: a multi-cell selection with a column filter popup open](docs/screenshot.png)
 
@@ -12,11 +12,11 @@ holds the logic. One Direct2D engine draws it, under a thin Tk or Qt host.
 
 | Requirement | Details |
 |---|---|
-| **Windows** | The renderer is Direct2D (`core/surface.dll`): needs Windows. No macOS/Linux backend. |
+| **Platform** | The renderer is OpenGL 1.1 (`core/glsurface.dll` / `.so`): Windows (WGL + GDI) and Linux (GLX + FreeType). No macOS backend. |
 | **Python 3.8+** | |
 | **Tk host** | Standard library only (`tkinter`). |
 | **Qt host** | Needs `PySide6` (`pip install PySide6`), the only dependency, and only for the Qt host. |
-| **Native DLLs** | The wheel bundles `surface.dll` (Direct2D renderer) and `gridcore.dll` (C++ data core). Both required; build from source needs CMake + MSVC. |
+| **Native libs** | The wheel bundles `glsurface` (OpenGL renderer) and `gridcore` (C++ data core). Both required; build from source needs CMake + a C++17 compiler (MSVC on Windows; GCC/Clang + GL/X11/FreeType dev headers on Linux). |
 
 ## Install
 
@@ -48,6 +48,20 @@ win = make_sheet(headers, rows, frozen_columns=2)
 win.mainloop()                                          # aliases app.exec()
 ```
 
+### From a pandas DataFrame
+
+`dataframe_to_grid(df)` turns a DataFrame into `(headers, rows)` you splat straight
+into `make_sheet` / `make_model`. pandas is **not** a dependency -- it duck-types the
+DataFrame, so it only needs pandas if you actually pass one. A MultiIndex columns
+frame becomes stacked headers (one row per level); `NaN`/`None` render blank.
+
+```python
+from fastpygrid import dataframe_to_grid
+from fastpygrid.render.tk import make_sheet
+win = make_sheet(*dataframe_to_grid(df), frozen_columns=2)
+win.mainloop()
+```
+
 ## Interface
 
 `make_sheet()` (in both `fastpygrid.render.tk` and `fastpygrid.render.qt`) opens a
@@ -59,7 +73,7 @@ are the header and data starts at `gr=header_rows` (so `gr=1` with one header ro
 ### `make_sheet(headers, rows, ...)`
 
 Builds the model, opens the window, returns it. Raises `RuntimeError` if a required
-native DLL (`surface.dll` or `gridcore.dll`) is missing.
+native lib (`glsurface` or `gridcore`) is missing.
 
 | Argument | Type | Default | What it does |
 |---|---|---|---|
@@ -72,6 +86,7 @@ native DLL (`surface.dll` or `gridcore.dll`) is missing.
 | `title` | `str` | host default | Window title. |
 | `uncap_rows` | `bool` | `False` | Lift the built-in row-count cap. |
 | `uncap_cols` | `bool` | `False` | Lift the built-in column-count cap. |
+| `filters` | `bool` | `True` | Show the per-column header filter/sort ▼ dropdowns. `False` hides them. |
 
 Returns the host window: a `tk.Tk` (or `Toplevel`) for Tk, a `QWidget` for Qt.
 Both carry `.mainloop()` (Qt aliases `app.exec()`), `.model` (the `GridModel`),
@@ -130,14 +145,14 @@ Read-only rows are keyed to the data and follow it.
 
 | Call | What it does |
 |---|---|
-| `set_vline(col, on=True)` | Thick black rule on the right edge of a column. |
-| `set_hline(gr, on=True)` | Thick black rule on the bottom edge of a grid row. |
+| `set_vline(col, on=True, width=None)` | Thick black rule on the right edge of a column. |
+| `set_hline(gr, on=True, width=None)` | Thick black rule on the bottom edge of a grid row. |
 | `set_readonly_col(col, on=True)` | Block edit/paste/delete in a column (still selectable and copyable). |
 | `set_readonly_row(gr, on=True)` | Same, for a row. |
 
 ```python
 m.set_vline(1)              # rule after the 'Company' column
-m.set_hline(0)              # rule under the header
+m.set_hline(0, width=4)     # rule under the header; width in px (omit for the 2px default)
 m.set_readonly_col(0)       # Ticker can't be edited
 ```
 
@@ -153,14 +168,22 @@ MSVC, and Python's `build`. Re-run after any `.cpp`/`.py` change.
 
 ## Run demo
 
-`demos/setup.bat` creates `demos/.venv` and installs the freshly built wheel.
-Run it after `build.bat`, then:
+After `build.bat`, launch the OpenGL demo. It copies the built DLLs out of
+`dist/*.whl` on first run, then prompts for the tk or qt host:
 
 ```bash
+demos\demo.bat                                           # prompts for tk or qt
 demos\demo.bat tk                                        # tkinter host, 100k rows
 demos\demo.bat qt                                        # Qt host, same data
 demos\demo.bat tk --rows 500000                          # stress it
-demos\.venv\Scripts\python scripts/tests/check_select.py # selection-state-machine check
+```
+
+The tk host needs nothing extra. The qt host needs PySide6: run `demos/setup.bat`
+once to create `demos/.venv` (PySide6 + the wheel), which `demo.bat` then uses
+automatically.
+
+```bash
+demos\.venv\Scripts\python -m pytest tests/                # headless self-checks
 ```
 
 ## Layout
@@ -168,14 +191,12 @@ demos\.venv\Scripts\python scripts/tests/check_select.py # selection-state-machi
 ```
 Fast-Python-Grid/
 |-- fastpygrid/             # the python package
-|   |-- core/               # model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine)
-|   |                       #   surface.dll + gridcore.dll compile in here, beside their loaders (not committed)
+|   |-- core/               # model, geometry, selection, rendering, gpu.py (OpenGL engine)
+|   |                       #   glsurface + gridcore libs compile in here, beside their loaders (not committed)
 |   |-- render/             # tk.py (tkinter host), qt.py (PySide6 host)
-|   `-- csrc/               # C++ sources: surface.cpp, gridcore.cpp
+|   `-- csrc/               # C++ sources: glsurface.cpp, gridcore.cpp
 |-- CMakeLists.txt          # compiles the DLLs (scikit-build-core)
 |-- build.bat               # python -m build -> dist/*.whl + *.tar.gz (same as CI/PyPI)
-|-- demos/                  # demo_gpu_tk.py, demo_gpu_qt.py, _data.py, setup.bat (wheel into demos/.venv)
-`-- scripts/
-    |-- tests/              # check_select.py (needs fastpygrid installed)
-    `-- benchmarks/         # bench_geometry.py (need fastpygrid installed)
+|-- demos/                  # demo_gpu_tk.py, demo_gpu_qt.py, _data.py, benchmark_*.py, setup.bat (wheel into demos/.venv)
+`-- tests/                  # headless self-checks (pytest; needs fastpygrid installed)
 ```

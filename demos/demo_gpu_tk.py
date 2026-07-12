@@ -1,4 +1,4 @@
-"""Direct2D/GPU demo: the fastpygrid Gpu renderer (Windows only).
+"""OpenGL/GPU demo: the fastpygrid Gpu renderer under a Tk host.
 
     python demos/demo_gpu_tk.py                 # 100k rows on the GPU surface
     python demos/demo_gpu_tk.py --rows 500000   # stress it
@@ -17,7 +17,7 @@ import sys
 
 # _data.py lives next to this file. fastpygrid is installed into demos/.venv by setup.bat.
 from _data import (HEADERS, COL_W, gen_rows, rows_arg, stream_styles, choices_demo,
-                   lines_demo, readonly_demo)
+                   lines_demo, readonly_demo, numeric_demo)
 
 # Each tab = a whole separate sheet with its own scroll-cap options.
 SHEETS = [
@@ -41,6 +41,7 @@ def _add_sheet(nb, title, headers, rows, col_w, scale, lib, **opts):
     choices_demo(model)            # Sector/Rating dropdowns (O(1), whole-column)
     lines_demo(model)              # thick section dividers
     readonly_demo(model)           # locked Ticker + Price columns
+    numeric_demo(model)            # Price/Chg%/Volume sort numerically, not a->z
     model.changed()                # first frame paints instantly with data + dropdowns
     stream_styles(frame)           # per-cell fg/bold/bg streams in after the first frame
 
@@ -49,9 +50,9 @@ def main():
     import tkinter as tk
     from tkinter import ttk
     from fastpygrid.core.gpu import _load_lib, _enable_dpi_awareness, _screen_scale
-    lib = _load_lib()
+    lib = _load_lib()                     # OpenGL 1.1 backend (glsurface)
     if lib is None:
-        raise SystemExit("Gpu surface unavailable. Build it with "
+        raise SystemExit("OpenGL surface unavailable. Build it with "
                          "`python -m fastpygrid.core.gpu --build`.")
     _enable_dpi_awareness()
     n = rows_arg(sys.argv)

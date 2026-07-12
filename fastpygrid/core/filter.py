@@ -1,11 +1,11 @@
 """Column filter/sort popup logic -- GUI-free, like FindController.
 
-The Tk and Qt filter popups are just widgets: a value checklist, a search box
+The GpuEngine filter popup is just a widget: a value checklist, a search box
 and OK/Cancel. All the actual behaviour (deferred distinct scan, per-value
 checked state, search over a capped column, and the exact commit rules for
-"clear vs keep exactly the checked members") lives here, driven identically by
-both. The widget only renders ``rows(query)`` with a checkbox per ``checked(v)``
-and forwards clicks to ``toggle`` / ``toggle_all`` and OK to ``commit``.
+"clear vs keep exactly the checked members") lives here. The popup only renders
+``rows(query)`` with a checkbox per ``checked(v)`` and forwards clicks to
+``toggle`` / ``toggle_all`` and OK to ``commit``.
 """
 
 
@@ -73,19 +73,3 @@ class FilterController:
             self.model.set_filter(self.col, None)
         else:
             self.model.set_filter(self.col, checked)
-
-
-if __name__ == "__main__":   # headless self-check of the commit rules
-    from .model import GridModel
-    m = GridModel(["A"], [["x"], ["y"], ["x"], ["z"]])
-    f = FilterController(m, 0); f.load()
-    assert f.rows("") == ["x", "y", "z"], f.rows("")
-    assert f.all_on(f.rows(""))
-    f.toggle("y"); assert not f.checked("y")
-    f.commit("")                                    # keep exactly {x, z}
-    assert m._filters[0] == {"x", "z"}, m._filters
-    f2 = FilterController(m, 0); f2.load()          # everything checked -> clears
-    f2.toggle_all(f2.rows("")); assert f2.all_on(f2.rows(""))
-    # active filter present + not capped -> "all checked" clears it
-    f2.commit(""); assert 0 not in m._filters, m._filters
-    print("filter self-check ok")

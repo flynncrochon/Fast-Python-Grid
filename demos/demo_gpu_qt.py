@@ -1,4 +1,4 @@
-"""Direct2D/GPU demo under a Qt (PySide6) host -- same engine as demo_gpu_tk.py.
+"""OpenGL/GPU demo under a Qt (PySide6) host -- same engine as demo_gpu_tk.py.
 
     python demos/demo_gpu_qt.py                 # 100k rows on the GPU surface
     python demos/demo_gpu_qt.py --rows 500000   # stress it
@@ -15,7 +15,7 @@ import sys
 
 # _data.py lives next to this file. fastpygrid is installed into demos/.venv by setup.bat.
 from _data import (HEADERS, COL_W, gen_rows, rows_arg, stream_styles, choices_demo,
-                   lines_demo, readonly_demo)
+                   lines_demo, readonly_demo, numeric_demo)
 
 # Each tab = a whole separate sheet with its own scroll-cap options.
 SHEETS = [
@@ -41,6 +41,7 @@ def _add_sheet(tabs, title, headers, rows, col_w, scale, lib, **opts):
     choices_demo(model)            # Sector/Rating dropdowns (O(1), whole-column)
     lines_demo(model)              # thick section dividers
     readonly_demo(model)           # locked Ticker + Price columns
+    numeric_demo(model)            # Price/Chg%/Volume sort numerically, not a->z
     model.changed()                # first frame paints instantly with data + dropdowns
     stream_styles(page)            # per-cell fg/bold/bg streams in after the first frame
 

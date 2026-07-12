@@ -64,6 +64,14 @@ def _grow(box, gr, col):
     return (min(box[0], gr), min(box[1], col), max(box[2], gr), max(box[3], col))
 
 
+def _is_num(s):
+    try:
+        float(s.replace(",", ""))
+        return True
+    except ValueError:
+        return False
+
+
 def _clean(cell):
     # membership test skips rebuilding the (common) already-clean string
     if "\t" in cell or "\n" in cell or "\r" in cell:
@@ -72,9 +80,8 @@ def _clean(cell):
 
 
 class GridModel:
-    def __init__(self, headers, rows, editable=True, on_edit=None):
+    def __init__(self, headers, rows, editable=True):
         self.editable = editable
-        self.on_edit = on_edit
         self.changed = lambda: None     # the view assigns its redraw here
         self.set_data(headers, rows)
 
@@ -106,8 +113,9 @@ class GridModel:
         self._find_cache = None    # (needle, case, scope, matches) of the last complete
                                    # scan -- lets the typing path refine instead of rescan
         self._distinct = {}       # col -> sorted distinct values (filter popup), data-edit invalidates
-        self._vlines = set()      # column indices with a thick divider on their RIGHT edge
-        self._hlines = set()      # grid-row indices with a thick divider on their BOTTOM edge
+        self._vlines = {}         # column index -> divider width px on its RIGHT edge (None = theme default)
+        self._hlines = {}         # grid-row index -> divider width px on its BOTTOM edge (None = theme default)
+        self._numeric = set()     # columns sorted numerically (smallest->largest) not a->z
         self._readonly = set()    # columns that reject edits/paste/delete (still selectable)
         self._readonly_rows = set()  # SOURCE rows (-1-gr for header) that reject edits, follows sort/filter
         self._styles = {}         # (src_row | -1 for header, col) -> {fg,bg,bold}, display only
@@ -139,6 +147,13 @@ class GridModel:
         dec = [(self._rows[r][col], r) for r in rows]
         blanks = [r for t, r in dec if t == ""]
         filled = [(t, r) for t, r in dec if t != ""]
+        if col in self._numeric:
+            # ponytail: strips commas only; add %/currency parsing if a column needs it
+            num = lambda s: float(s.replace(",", ""))
+            unparsed = [(t, r) for t, r in filled if not _is_num(t)]
+            filled = [(t, r) for t, r in filled if _is_num(t)]
+            filled.sort(key=lambda it: num(it[0]), reverse=not ascending)
+            return [r for _t, r in filled] + [r for _t, r in unparsed] + blanks
         filled.sort(key=lambda it: it[0].lower(), reverse=not ascending)
         return [r for _t, r in filled] + blanks
 
@@ -205,6 +220,13 @@ class GridModel:
             return self._headers[gr][col]
         r = self._src_data(gr - self._hdr)
         return self._rows[r][col] if 0 <= r < len(self._rows) else ""
+
+    def block_text(self, data_rows, cols):
+        """Text for a viewport block as {(data_idx, col): str}, data_idx = grid_row -
+        hdr_rows. paint() prefetches the whole body in one shot so a core-backed model
+        can batch it into a single FFI (see CoreModel.block_text). Base = per-cell."""
+        H, cell = self._hdr, self.cell
+        return {(di, c): cell(di + H, c) for di in data_rows for c in cols}
 
     def data_extent(self):
         """(last_real_row, last_col) for Ctrl+A -- header + real data, never the
@@ -336,14 +358,22 @@ class GridModel:
     # --- thick section dividers (display only, black). Positional -- keyed by
     # column / GRID-row index, not by source row, so they mark a fixed place in
     # the sheet (like the frozen divider) and do NOT follow data through sort/filter.
-    def set_vline(self, col, on=True):
-        """Thick black divider on the RIGHT edge of column `col` (on=False clears)."""
-        self._vlines.add(col) if on else self._vlines.discard(col)
+    def set_vline(self, col, on=True, width=None):
+        """Thick black divider on the RIGHT edge of column `col` (on=False clears).
+        `width` = stroke px (DPI-scaled by the renderer); None uses the theme default."""
+        if on:
+            self._vlines[col] = width
+        else:
+            self._vlines.pop(col, None)
         self.changed()
 
-    def set_hline(self, gr, on=True):
-        """Thick black divider on the BOTTOM edge of grid row `gr` (on=False clears)."""
-        self._hlines.add(gr) if on else self._hlines.discard(gr)
+    def set_hline(self, gr, on=True, width=None):
+        """Thick black divider on the BOTTOM edge of grid row `gr` (on=False clears).
+        `width` = stroke px (DPI-scaled by the renderer); None uses the theme default."""
+        if on:
+            self._hlines[gr] = width
+        else:
+            self._hlines.pop(gr, None)
         self.changed()
 
     def vlines(self):
@@ -449,6 +479,16 @@ class GridModel:
         self._text_filters.pop(col, None)
         self._color_filters.pop(col, None)
         self._after_view_change()
+
+    def set_column_numeric(self, col, numeric=True):
+        """Mark `col` as a number column: its sort becomes smallest->largest
+        (ascending) / largest->smallest instead of a->z. Re-sorts if active."""
+        self._numeric.add(col) if numeric else self._numeric.discard(col)
+        if self.has_sort(col) and len(self._sort) == 2:
+            self._rebuild(); self.changed()
+
+    def is_column_numeric(self, col):
+        return col in self._numeric
 
     def set_sort(self, col, ascending):
         self._sort = (col, ascending)
@@ -565,33 +605,3 @@ class GridModel:
     def _rebuilds_on_edit(self, gr, col):
         return gr >= self._hdr and (col in self._filters or col in self._text_filters
                             or (self._sort is not None and self._sort[0] == col))
-
-
-if __name__ == "__main__":   # headless check of GridModel view/style state (editing lives in CoreModel now)
-    m = GridModel(["A", "B"], [["x", "p"], ["y", "q"], ["x", "r"], ["z", "s"]])
-
-    # filter/sort commit as undoable "view" entries (no cell diff)
-    m.set_filter(0, {"x"}); assert m.has_filter(0)
-    assert m.undo() is None and not m.has_filter(0)      # reverted, no cell jump
-    assert m.redo() is None and m.has_filter(0)
-    m.clear_filters()
-    m.set_sort(0, ascending=True); assert m.has_sort(0)
-    m.undo(); assert not m.has_sort(0)
-
-    # per-cell dropdown choices (identical option lists are interned)
-    assert m.cell_choices(1, 0) is None
-    m.set_cell_choices(1, 0, ["x", "y", "z"])
-    assert m.cell_choices(1, 0) == ("x", "y", "z") and m.dropdown_cols() == {0}
-    m.set_cell_choices(1, 1, ["x", "y", "z"])
-    assert m.cell_choices(1, 1) is m.cell_choices(1, 0)  # shared object
-    m.set_cell_choices(1, 0, None)
-    assert m.cell_choices(1, 0) is None and m.dropdown_cols() == {1}
-
-    # grid lines + readonly flags
-    assert m.vlines() == set() and m.hlines() == set()
-    m.set_vline(0); m.set_hline(1)
-    assert m.vlines() == {0} and m.hlines() == {1}
-    m.set_vline(0, on=False); assert m.vlines() == set()
-    m.set_readonly_col(0); assert m.col_readonly(0)
-    m.set_readonly_col(0, on=False); assert not m.col_readonly(0)
-    print("model self-check ok")

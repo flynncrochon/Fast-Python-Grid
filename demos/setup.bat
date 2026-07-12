@@ -23,8 +23,11 @@ if exist "%PY%" (
 set "WHEEL="
 for %%W in ("%ROOT%dist\*.whl") do set "WHEEL=%%W"
 if defined WHEEL (
-    "%PY%" -m pip install --force-reinstall "%WHEEL%" || exit /b 1
-    echo [setup] Installed %WHEEL%
+    REM Force-reinstall fastpygrid so a rebuilt same-version wheel updates. Then pull
+    REM the qt extra (PySide6) for the Qt demo host; idempotent, downloads only once.
+    "%PY%" -m pip install --force-reinstall --no-deps "%WHEEL%" || exit /b 1
+    "%PY%" -m pip install "%WHEEL%[qt]" || exit /b 1
+    echo [setup] Installed %WHEEL% (with qt extra: PySide6)
 ) else (
     echo [setup] NOTE: no wheel in dist\. Run build.bat first, then re-run setup.bat.
 )

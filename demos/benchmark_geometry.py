@@ -1,7 +1,7 @@
 """Hot-path bench for wide sheets: the per-frame column ops (visible_cols,
 x_to_col, col_edge_hit) and a full paint() display-list build, at growing column
 counts. Compares the bisect implementations against a linear reference so the
-speedup is explicit. Run: python scripts/benchmarks/bench_geometry.py
+speedup is explicit. Run: python demos/benchmark_geometry.py
 """
 import os
 import sys
