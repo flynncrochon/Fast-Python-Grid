@@ -131,14 +131,14 @@ Read-only rows are keyed to the data and follow it.
 
 | Call | What it does |
 |---|---|
-| `set_vline(col, on=True)` | Thick black rule on the right edge of a column. |
-| `set_hline(gr, on=True)` | Thick black rule on the bottom edge of a grid row. |
+| `set_vline(col, on=True, width=None)` | Thick black rule on the right edge of a column. |
+| `set_hline(gr, on=True, width=None)` | Thick black rule on the bottom edge of a grid row. |
 | `set_readonly_col(col, on=True)` | Block edit/paste/delete in a column (still selectable and copyable). |
 | `set_readonly_row(gr, on=True)` | Same, for a row. |
 
 ```python
 m.set_vline(1)              # rule after the 'Company' column
-m.set_hline(0)              # rule under the header
+m.set_hline(0, width=4)     # rule under the header; width in px (omit for the 2px default)
 m.set_readonly_col(0)       # Ticker can't be edited
 ```
 
