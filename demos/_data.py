@@ -102,6 +102,13 @@ def readonly_demo(model):
     model.set_readonly_col(HEADERS.index("Price"))
 
 
+def numeric_demo(model):
+    """Mark the number columns so their sort is smallest->largest, not a->z
+    (try sorting Price or Volume: without this "100" would land before "9")."""
+    for name in ("Price", "Chg%", "Volume"):   # QUARTERS carry an "M" suffix -> not plain numbers
+        model.set_column_numeric(HEADERS.index(name))
+
+
 def choices_demo(model):
     """Make Sector/Rating dropdowns, plus a 1000-option long-text dropdown on the
     narrow Note column (to exercise popup widening). Same bulk-before-build note as

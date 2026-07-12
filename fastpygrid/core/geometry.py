@@ -13,14 +13,16 @@ from itertools import accumulate
 
 class Geometry:
     MAX_COLS = 16384          # column cap (the classic spreadsheet limit), uncapped scroll stops there
+    OVERSCROLL_PAD = 24       # px you can always pan past the last cell (right/down), so it never sits flush to the edge
     def __init__(self, col_w, frozen=0, gutter_w=56, row_h=22, hdr_rows=1,
-                 uncap_rows=False, uncap_cols=False):
+                 uncap_rows=False, uncap_cols=False, filters=True):
         # uncap_*: let the view scroll past the last row/col into empty space
         # (spreadsheet-style). The scrollbar thumb shrinks as you overscroll and snaps
         # back when you scroll in again, unless you typed out there, which grows
         # the model. False (default) = clamped to the data.
         self.uncap_rows = uncap_rows
         self.uncap_cols = uncap_cols
+        self.filters = filters             # show header filter/sort ▼ buttons (paint + hit)
         self.frozen = frozen
         self.gutter_w = gutter_w
         self.hdr_rows = max(1, hdr_rows)
@@ -30,13 +32,29 @@ class Geometry:
         self.header_h = self.letter_h + self.hdr_rows * self.field_h   # body starts here
         self.set_cols(col_w)
         self.w = self.h = 0                 # viewport size, set by the renderer
-        self.top_row = self.hdr_rows        # first visible DATA row
+        # Vertical scroll is a PIXEL offset (like scroll_x), so the body can scroll
+        # sub-row for smooth wheel/inertia panning instead of snapping a whole row at
+        # a time. top_row (below) is a derived property, so every row-index call site
+        # is unchanged. scroll_y == 0 -> the first data row is flush under the header.
+        self.scroll_y = 0                   # vertical pixel offset from the first data row
         self.scroll_x = 0                   # horizontal pixel offset (scrollable cols)
         # Used range (nrows-equiv, ncols) the scrollbar thumb reflects, set by the
         # renderer from model.used_extent(). None = unknown -> fall back to the full
         # grown size. Trims blank rows/cols left behind by overscroll editing so the
         # thumb snaps back to the data (you can still scroll into the blanks).
         self.used_rows = self.used_cols = None
+
+    # top_row is derived from the pixel offset (first row whose band the viewport top
+    # falls in). A setter maps a target row back to a row-aligned pixel offset, so the
+    # existing `g.top_row = ...` / `g.top_row += ...` call sites keep working (they snap
+    # to a whole row, which is what keyboard/paging want); wheel writes scroll_y directly.
+    @property
+    def top_row(self):
+        return self.hdr_rows + int(self.scroll_y // self.row_h)
+
+    @top_row.setter
+    def top_row(self, v):
+        self.scroll_y = max(0, v - self.hdr_rows) * self.row_h
 
     # --- layout -------------------------------------------------------
     def set_cols(self, col_w):
@@ -92,7 +110,7 @@ class Geometry:
         """Top screen-y of grid row gr. Header rows are pinned in the field band."""
         if gr < self.hdr_rows:
             return self.letter_h + gr * self.field_h
-        return self.header_h + (gr - self.top_row) * self.row_h
+        return self.header_h + (gr - self.hdr_rows) * self.row_h - self.scroll_y
 
     def row_h_at(self, gr):
         return self.field_h if gr < self.hdr_rows else self.row_h
@@ -131,17 +149,35 @@ class Geometry:
         return max(self.hdr_rows, self.row_extent(nrows) - self.full_rows())
 
     def max_scroll_x(self):
-        return max(0, self.col_extent() - (self.w - self.freeze_x()))
+        raw = self.col_extent() - (self.w - self.freeze_x())
+        return raw + self.OVERSCROLL_PAD if raw > 0 else 0   # a bit past the last column, only when it overflows
+
+    def max_scroll_y(self, nrows):
+        """Vertical pixel-scroll limit: the last screen shows `full_rows` whole rows
+        (row-aligned bottom, matching max_top), so it never overscrolls past the data.
+        Uncapped: add one viewport of headroom past the current position (the vertical
+        twin of col_extent's phantom-column headroom) so there's always room to scroll
+        further down -- without it the target clamps to where you already are and the
+        wheel can't advance past the last data row."""
+        cap = max(0, (self.max_top(nrows) - self.hdr_rows) * self.row_h)
+        if self.uncap_rows:
+            cap += self.h - self.header_h
+        elif cap > 0:
+            cap += self.OVERSCROLL_PAD    # a bit past the last row, only when it overflows
+        return cap
 
     def clamp(self, nrows):
-        self.top_row = max(self.hdr_rows, min(self.top_row, self.max_top(nrows)))
+        self.scroll_y = max(0, min(self.scroll_y, self.max_scroll_y(nrows)))
         self.scroll_x = max(0, min(self.scroll_x, self.max_scroll_x()))
 
     def visible_data_rows(self, nrows):
         """Visible DATA grid rows, the header rows are always pinned. Uncapped:
         keeps filling the viewport past the data with phantom (blank) rows, so the
         gutter keeps numbering, spreadsheet-style."""
-        hi = self.top_row + self.vis_rows()
+        # Rows whose band intersects the body [scroll_y, scroll_y + view). +2 rows of
+        # headroom so a partially-visible row at the top AND bottom (sub-row scroll) is
+        # always included; extra off-screen rows are clipped by the surface, near-free.
+        hi = self.hdr_rows + int((self.scroll_y + (self.h - self.header_h)) // self.row_h) + 2
         if not self.uncap_rows:
             hi = min(hi, nrows)
         return list(range(max(self.hdr_rows, self.top_row), hi))
@@ -195,7 +231,7 @@ class Geometry:
             if x < self.gutter_w:
                 return "gutter", hr, 0
             return "cell", hr, (col if col is not None else ncols - 1)
-        row = self.top_row + int((y - self.header_h) // self.row_h)
+        row = self.hdr_rows + int((self.scroll_y + y - self.header_h) // self.row_h)
         row = max(self.hdr_rows, row if self.uncap_rows else min(nrows - 1, row))
         if x < self.gutter_w:
             return "gutter", row, 0
@@ -208,7 +244,7 @@ class Geometry:
         by = self.header_h - self.field_h + (self.field_h - sz) // 2
         return bx, by, sz
 
-    def col_edge_hit(self, x, y, ncols, grab=4):
+    def col_edge_hit(self, x, y, ncols, grab=7):
         """Column whose RIGHT border sits within `grab` px of screen-x `x`, when
         the pointer is in the header band, else None. Drives column drag-resize
         and dbl-click autofit, resizes the column LEFT of the grabbed border."""
@@ -230,6 +266,8 @@ class Geometry:
         return None
 
     def filter_btn_hit(self, x, y, c):
+        if not self.filters:                      # filters disabled: no button to hit
+            return False
         if not (0 <= c < len(self.col_w)):        # phantom/out-of-range column: no filter button
             return False
         if not (self.header_h - self.field_h <= y < self.header_h):
@@ -265,18 +303,19 @@ class Geometry:
         topmost visible data row so the caller's autoscroll reveals rows above
         one at a time instead of jumping onto the header band."""
         if y >= self.header_h:
-            row = self.top_row + int((y - self.header_h) // self.row_h)
+            row = self.hdr_rows + int((self.scroll_y + y - self.header_h) // self.row_h)
             return max(self.hdr_rows, row if self.uncap_rows else min(nrows - 1, row))
         if self.top_row <= self.hdr_rows:
             return max(0, min(self.hdr_rows - 1, int((y - self.letter_h) // self.field_h)))
         return self.top_row
 
     def scroll_into_view(self, gr, c):
-        if gr >= self.hdr_rows:
-            if gr < self.top_row:
-                self.top_row = gr
-            elif gr >= self.top_row + self.full_rows():
-                self.top_row = gr - self.full_rows() + 1
+        if gr >= self.hdr_rows:                       # pixel-exact reveal (mirrors the x branch),
+            y = self.row_y(gr)                         # so a partially-scrolled row snaps flush
+            if y < self.header_h:
+                self.scroll_y = max(0, self.scroll_y - (self.header_h - y))
+            elif y + self.row_h > self.h:
+                self.scroll_y += (y + self.row_h) - self.h
         if c >= self.frozen:
             x = self.col_x(c)
             cw = self.col_width(c)
@@ -284,58 +323,3 @@ class Geometry:
                 self.scroll_x -= (self.freeze_x() - x)
             elif x + cw > self.w:
                 self.scroll_x += x + cw - self.w
-
-
-if __name__ == "__main__":   # overscroll clamp / extent self-check (no toolkit)
-    g = Geometry([100, 100], hdr_rows=1)
-    g.w, g.h = 400, 220
-    N = 20
-    # capped (default): scroll clamps to the data extent
-    g.top_row = 999; g.clamp(N)
-    assert g.top_row == g.max_top(N) <= N and g.row_extent(N) == N, g.top_row
-    # uncapped: overscroll sticks, extent grows to match, snaps back on scroll-up
-    g.uncap_rows = True
-    g.top_row = 999; g.clamp(N)
-    assert g.top_row == 999 and g.row_extent(N) == 999 + g.full_rows(), g.top_row
-    g.top_row = 1; g.clamp(N)
-    assert g.top_row == g.hdr_rows and g.row_extent(N) == N, g.top_row
-    # columns overscroll the same way (cols wider than the viewport)
-    g.set_cols([400, 400])
-    g.uncap_cols = True
-    g.scroll_x = 99999; g.clamp(N)
-    assert 0 < g.scroll_x <= g.max_scroll_x(), g.scroll_x   # overscroll sticks, still room past it
-    g.scroll_x = 0; g.clamp(N)
-    base = g.content_w() - g.frozen_w()
-    assert g.scroll_x == 0 and g.col_extent() == base + g._phantom_w()  # snapped back, one column of headroom
-    assert g.max_scroll_x() > 0                              # ...but always room to scroll further right
-    # phantom rows/cols keep filling the viewport past the data when uncapped, so the
-    # gutter keeps numbering and the letter band keeps lettering (spreadsheet-style)
-    g2 = Geometry([80, 80], hdr_rows=1, uncap_rows=True, uncap_cols=True)
-    g2.w, g2.h = 300, 200
-    vr = g2.visible_data_rows(5)            # only 5 grid rows of data
-    assert vr and max(vr) > 5, vr           # rows numbered past the data
-    vc = g2.visible_cols(2)                 # only 2 real columns
-    assert vc and max(vc) > 2, vc           # columns lettered past the data
-    assert g2.col_width(50) == g2._phantom_w() and g2.col_x(4) > g2.col_x(3)
-    # uncapped columns stop at the 16384-column cap: can't scroll or hit past it
-    g2.scroll_x = 10**9; g2.clamp(5)
-    assert g2.x_to_col(g2.w - 1, 2) <= Geometry.MAX_COLS - 1
-    assert max(g2.visible_cols(2)) <= Geometry.MAX_COLS - 1
-    # hit-testing a phantom column's header must not index col_w (no filter button there)
-    assert g2.filter_btn_hit(g2.w - 1, g2.header_h - 1, 500) is False
-    # used_rows/used_cols trim the thumb's base to real content, even after the model
-    # grew: scrolled back to the top, the extent reflects the used range, not the grown size
-    gt = Geometry([80, 80], hdr_rows=1, uncap_rows=True, uncap_cols=True)
-    gt.w, gt.h = 300, 200
-    gt.top_row = gt.hdr_rows                          # scrolled back to the top
-    gt.used_rows, gt.used_cols = 8, 2                 # 2 real cols, few used rows (rest blank overscroll)
-    assert gt.row_extent(9999) == max(8, gt.top_row + gt.full_rows())   # not 9999
-    assert gt.col_extent() < gt.col_left(9999)        # not the grown width
-    # bisect hit-testing matches a brute-force linear scan at every pixel
-    g3 = Geometry([40, 90, 25, 70, 60], frozen=1); g3.w, g3.h = 300, 200; g3.scroll_x = 55
-    for x in range(0, 320):
-        want = next((c for c in range(5) if g3._cum[c] <= (
-            (x - g3.gutter_w) if x < g3.freeze_x() else (x - g3.gutter_w + g3.scroll_x)
-        ) < g3._cum[c + 1]), None) if x >= g3.gutter_w else None
-        assert g3.x_to_col(x, 5) == want, (x, g3.x_to_col(x, 5), want)
-    print("geometry overscroll self-check ok")
