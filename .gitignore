@@ -21,3 +21,5 @@ demos/fastpygrid/
 *.egg-info/
 
 AGENTS.md
+
+build_native/

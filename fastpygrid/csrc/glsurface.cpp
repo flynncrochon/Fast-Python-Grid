@@ -4,13 +4,13 @@
 //
 // All GL drawing (ortho setup, quads, stencil fills, textured glyph quads, op-buffer
 // decode) is shared. Two things are platform-specific and live behind #ifdef:
-// creating the GL context + child window, and rasterizing a glyph to an 8-bit
-// coverage bitmap (GDI on Windows, FreeType on Linux).
+// creating the GL context + child window, and rasterizing a glyph to an RGB subpixel
+// coverage bitmap (GDI ClearType on Windows, FreeType LCD on Linux).
 //
 // TEXT: GL 1.1 has no text primitive. Each codepoint is rasterized on demand into a
-// GL_LUMINANCE_ALPHA texture (L=255, A=coverage) and drawn as a textured quad in
-// GL_MODULATE, so glColor gives the text color and the texture alpha gives the
-// anti-aliased coverage. Cached per (size, bold, codepoint).
+// GL_RGB atlas holding per-subpixel (R,G,B) coverage -- ClearType/LCD, ~3x horizontal
+// resolution like Excel -- and composited in two blend passes per run so each subpixel
+// blends independently: out = text*cov + dst*(1-cov). Cached per (size, bold, codepoint).
 //
 // Wire format (little-endian, colors 0xRRGGBB, -1 = none):
 //   'R' rect : f32 x,y,w,h | i32 fill | i32 outline | f32 width
@@ -18,7 +18,7 @@
 //   'P' poly : i32 color | u16 npts | npts*(f32 x,f32 y)      (filled, may be concave)
 //   'T' text : f32 x,y,w,h | i32 color | f32 size_px | u8 flags(1=bold,2=center)
 //              | u16 nchars | nchars*u16 (UTF-16LE)
-//   'X' text : f32 x,y,w,h | f32 origin_x | i32 color | f32 size_px | u16 nchars | UTF-16LE
+//   'X' text : f32 x,y,w,h | f32 origin_x | i32 color | f32 size_px | u8 bold | u16 nchars | UTF-16LE
 
 #include <map>
 #include <unordered_map>
@@ -29,12 +29,15 @@
 #include <cmath>
 #include <cstdlib>
 
-// Swap interval: vsync ON by default (windowed uncapped GL through the compositor
-// has severe frame-time spikes). FASTPYGRID_VSYNC=0 turns it off for raw-throughput
-// benchmarking. Read once, at context creation.
+// Swap interval: vsync OFF by default (the vblank wait capped animation fps at the
+// refresh rate for no visual gain). FASTPYGRID_VSYNC=1 turns it back on. Read once,
+// at context creation.
 static int env_swap_interval() {
+    // Vsync OFF by default: the vblank wait was pure idle time that capped animation
+    // (zoom/scroll) fps at the refresh rate for no visual benefit. Opt back in with
+    // FASTPYGRID_VSYNC=1.
     const char* e = std::getenv("FASTPYGRID_VSYNC");
-    return (e && e[0] == '0') ? 0 : 1;
+    return (e && e[0] == '1') ? 1 : 0;
 }
 
 #ifdef _WIN32
@@ -52,6 +55,7 @@ static int env_swap_interval() {
   #include <ft2build.h>
   #include FT_FREETYPE_H
   #include FT_SYNTHESIS_H              // FT_GlyphSlot_Embolden (synthetic bold)
+  #include FT_LCD_FILTER_H             // FT_Library_SetLcdFilter (subpixel LCD)
   #define EXPORT extern "C" __attribute__((visibility("default")))
 #endif
 
@@ -63,7 +67,10 @@ struct Glyph {
     int gw = 0, gh = 0;            // glyph bitmap size (px)
     float u0 = 0, v0 = 0, u1 = 0, v1 = 0;   // sub-rect inside the shared atlas texture
     int bx = 0, by = 0;            // left bearing, top bearing (baseline->top, +up)
-    int adv = 0;                   // pen advance (px)
+    float uadv = 0;                // UNHINTED advance per 1px of font size (advance = uadv*fpx).
+                                   // Unhinted so it scales linearly with zoom: hinted (grid-fit)
+                                   // advances jump per integer px size and make ellipsis-trim
+                                   // flip in/out across zoom. See text_width / batch_run.
 };
 
 // One texture holding every rasterized glyph, filled by a simple shelf packer. All
@@ -78,12 +85,13 @@ struct Atlas {
 
 struct GFont {
     int ascent = 0, descent = 0;
+    int px = 0;                                   // raster pixel size (for unhinted-advance scaling)
+    bool bold = false;
     std::unordered_map<uint32_t, Glyph> glyphs;   // hot: hit ~4x/char/frame, hash beats tree
 #ifdef _WIN32
     HFONT hf = nullptr;
 #else
     FT_Face face = nullptr;
-    bool bold = false;
 #endif
 };
 
@@ -94,6 +102,7 @@ struct Ctx {
     std::map<uint64_t, GFont> fonts;      // (size*4 | bold) -> GFont
     Atlas atlas;                         // shared glyph atlas (all fonts/sizes share it)
     GLuint bound_tex = 0;                // currently-bound texture, to skip redundant binds
+    bool anim = false;                   // mid zoom-glide: raster at a snapped size + GPU-scale (see raster_size)
 #ifdef _WIN32
     HWND hwnd = nullptr;
     HDC  hdc  = nullptr;
@@ -113,25 +122,14 @@ static void rgb(int32_t c, GLfloat* out) {
     out[2] = (c & 0xff) / 255.f;
 }
 
-// Text coverage gamma (stem darkening). GDI/FreeType grayscale AA leaves sub-pixel
-// stems -- small / zoomed-out text -- as faint mid-gray with no solid core (a 7px
-// glyph measured all-gray, nothing below ~110/255), which reads as blurry. Pushing
-// partial coverage toward opaque with an exponent < 1 gives thin stems a dark core,
-// the same "stem darkening" ClearType and FreeType apply. Both rasterizers feed their
-// coverage through this 256-entry LUT (built once).
-// ponytail: COV_GAMMA is a by-eye perceptual knob -- lower = heavier/darker text,
-// 1.0 = the old linear (blurry-at-small) behaviour. Tune here if text reads too bold.
-static const uint8_t* cov_lut() {
-    static uint8_t lut[256];
-    static bool init = false;
-    if (!init) {
-        const double COV_GAMMA = 0.65;
-        for (int i = 0; i < 256; i++)
-            lut[i] = (uint8_t)std::lround(std::pow(i / 255.0, COV_GAMMA) * 255.0);
-        init = true;
-    }
-    return lut;
-}
+// Subpixel (ClearType/LCD) text: each glyph is rasterized to *per-channel* RGB
+// coverage -- R/G/B lit independently -- giving ~3x horizontal resolution, the same
+// thing Excel does. The atlas is GL_RGB and text draws in two blend passes (flush()).
+//
+// The GDI/FreeType white-on-black mask already has the renderer's gamma baked in, so
+// we composite it as-is: an offscreen readback of the two-pass GL result is pixel-for-
+// pixel identical to native GDI ClearType black-on-white. (An extra gamma pass over the
+// mask only lightens/fringes it away from that reference -- verified, don't add one.)
 
 // --- little-endian buffer readers (advance the cursor) ---
 static float    rf(const uint8_t* p, size_t& i) { float v;    memcpy(&v, p + i, 4); i += 4; return v; }
@@ -211,32 +209,76 @@ static void plat_font_metrics(Ctx& c, GFont& f, int size, bool bold) {
                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     SelectObject(c.memdc, f.hf);
     TEXTMETRICW tm; GetTextMetricsW(c.memdc, &tm);
-    f.ascent = tm.tmAscent; f.descent = tm.tmDescent;
+    f.ascent = tm.tmAscent; f.descent = tm.tmDescent; f.px = size; f.bold = bold;
 }
-// Rasterize one codepoint into an 8-bit coverage bitmap. Returns false for glyphs
-// with no bitmap (space): caller still records the advance.
+// A large reference font (per weight) whose advances are effectively un-grid-fit:
+// dividing a glyph's advance at this size by REF_PX gives its size-independent design
+// ratio, so layout width scales linearly with zoom. Measuring at the raster size instead
+// (GDI hints/rounds each advance to the pixel grid) makes width jump per integer size,
+// which flipped the ellipsis-trim in and out as you zoomed. Created once.
+static const int REF_PX = 512;
+static HFONT ref_font(bool bold) {
+    static HFONT n = nullptr, b = nullptr;
+    HFONT& h = bold ? b : n;
+    if (!h) h = CreateFontW(-REF_PX, 0, 0, 0, bold ? FW_BOLD : FW_NORMAL, 0, 0, 0,
+                            DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    return h;
+}
+// Rasterize one codepoint into an RGB subpixel-coverage bitmap (3 bytes/px). Renders
+// white text on a black 32bpp DIB with the ClearType HFONT: white-on-black means each
+// output R/G/B *is* that subpixel's coverage. Returns false for glyphs with no ink
+// (space): caller still records the advance.
 static bool plat_raster(Ctx& c, GFont& f, uint32_t cp,
                         std::vector<uint8_t>& cov, int& gw, int& gh,
-                        int& bx, int& by, int& adv) {
+                        int& bx, int& by, float& uadv) {
     SelectObject(c.memdc, f.hf);
     GLYPHMETRICS gm; MAT2 mat = {{0,1},{0,0},{0,0},{0,1}};
-    const UINT GGO = GGO_GRAY8_BITMAP;            // 65 coverage levels (0..64)
-    DWORD n = GetGlyphOutlineW(c.memdc, cp, GGO, &gm, 0, nullptr, &mat);
-    if (n == GDI_ERROR) { gw = gh = 0; bx = by = 0; adv = 0; return false; }
-    adv = gm.gmCellIncX;
-    gw = gm.gmBlackBoxX; gh = gm.gmBlackBoxY;
-    bx = gm.gmptGlyphOrigin.x; by = gm.gmptGlyphOrigin.y;
-    if (n == 0 || gw == 0 || gh == 0) { gw = gh = 0; return false; }   // whitespace
-    std::vector<uint8_t> raw(n);
-    GetGlyphOutlineW(c.memdc, cp, GGO, &gm, n, raw.data(), &mat);
-    int pitch = (gw + 3) & ~3;                    // GGO rows are DWORD-aligned
-    cov.assign((size_t)gw * gh, 0);
-    const uint8_t* lut = cov_lut();
+    // Metrics only: black-box size, origin (left/top bearing) and advance.
+    DWORD r = GetGlyphOutlineW(c.memdc, cp, GGO_METRICS, &gm, 0, nullptr, &mat);
+    if (r == GDI_ERROR) { gw = gh = 0; bx = by = 0; uadv = 0; return false; }
+    // Size-independent advance: measure at the big reference font, divide by REF_PX.
+    SelectObject(c.memdc, ref_font(f.bold));
+    int rw = 0;
+    if (GetCharWidth32W(c.memdc, cp, cp, &rw)) uadv = (float)rw / REF_PX;
+    else uadv = (float)gm.gmCellIncX / (f.px > 0 ? f.px : 1);   // fallback (non-TT)
+    SelectObject(c.memdc, f.hf);                                // restore for outline/ExtTextOut below
+    int obx = gm.gmptGlyphOrigin.x, oby = gm.gmptGlyphOrigin.y;
+    int ogw = gm.gmBlackBoxX, ogh = gm.gmBlackBoxY;
+    if (ogw == 0 || ogh == 0) { gw = gh = 0; return false; }   // whitespace
+
+    const int PAD = 1;                            // 1px margin: ClearType bleeds ~1 subpixel sideways
+    gw = ogw + 2 * PAD; gh = ogh + 2 * PAD;
+    bx = obx - PAD;     by = oby + PAD;           // stays self-consistent with the padded box
+
+    // Top-down 32bpp DIB, filled black; draw the glyph's ink box at (PAD, PAD).
+    BITMAPINFO bmi = {};
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = gw; bmi.bmiHeader.biHeight = -gh;   // negative = top-down
+    bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP dib = CreateDIBSection(c.memdc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!dib || !bits) { if (dib) DeleteObject(dib); gw = gh = 0; return false; }
+    memset(bits, 0, (size_t)gw * gh * 4);         // black background
+    HGDIOBJ oldbmp = SelectObject(c.memdc, dib);
+    SetBkMode(c.memdc, TRANSPARENT);
+    SetTextColor(c.memdc, RGB(255, 255, 255));
+    SetTextAlign(c.memdc, TA_LEFT | TA_BASELINE | TA_NOUPDATECP);
+    wchar_t w = (wchar_t)cp;
+    ExtTextOutW(c.memdc, PAD - obx, PAD + oby, 0, nullptr, &w, 1, nullptr);  // baseline-relative pen
+    GdiFlush();
+
+    cov.assign((size_t)gw * gh * 3, 0);
+    const uint8_t* src = (const uint8_t*)bits;    // BGRX per pixel, top-down
     for (int yy = 0; yy < gh; yy++)
         for (int xx = 0; xx < gw; xx++) {
-            uint8_t v = raw[(size_t)yy * pitch + xx];   // 0..64
-            cov[(size_t)yy * gw + xx] = lut[v >= 64 ? 255 : (v * 255) / 64];
+            const uint8_t* s = src + ((size_t)yy * gw + xx) * 4;
+            uint8_t* d = &cov[((size_t)yy * gw + xx) * 3];
+            d[0] = s[2]; d[1] = s[1]; d[2] = s[0];   // R,G,B coverage from BGRX, as-is
         }
+    SelectObject(c.memdc, oldbmp);
+    DeleteObject(dib);
     return true;
 }
 
@@ -282,33 +324,34 @@ static void plat_destroy(Ctx& c) {
     if (c.dpy) XCloseDisplay(c.dpy);
 }
 static void plat_font_metrics(Ctx& c, GFont& f, int size, bool bold) {
-    if (!g_ft) FT_Init_FreeType(&g_ft);
+    if (!g_ft) { FT_Init_FreeType(&g_ft); FT_Library_SetLcdFilter(g_ft, FT_LCD_FILTER_DEFAULT); }
     for (int i = 0; FONT_CANDIDATES[i] && !f.face; i++)
         FT_New_Face(g_ft, FONT_CANDIDATES[i], 0, &f.face);
     if (f.face) {
         FT_Set_Pixel_Sizes(f.face, 0, size);
         f.ascent = f.face->size->metrics.ascender >> 6;
         f.descent = -(f.face->size->metrics.descender >> 6);
+        f.px = size;
     }
     f.bold = bold;
 }
 static bool plat_raster(Ctx&, GFont& f, uint32_t cp,
                         std::vector<uint8_t>& cov, int& gw, int& gh,
-                        int& bx, int& by, int& adv) {
-    gw = gh = bx = by = adv = 0;
-    if (!f.face || FT_Load_Char(f.face, cp, FT_LOAD_RENDER)) return false;
-    if (f.bold) FT_GlyphSlot_Embolden(f.face->glyph);
+                        int& bx, int& by, float& uadv) {
+    gw = gh = bx = by = 0; uadv = 0;
+    if (!f.face || FT_Load_Char(f.face, cp, FT_LOAD_TARGET_LCD)) return false;   // LCD-hinted outline
     FT_GlyphSlot g = f.face->glyph;
-    adv = g->advance.x >> 6;
+    if (f.bold) FT_GlyphSlot_Embolden(g);                       // embolden outline before rendering
+    // linearHoriAdvance (16.16) is the UNHINTED advance -> scales linearly with size.
+    uadv = (float)(g->linearHoriAdvance / 65536.0) / (f.px > 0 ? f.px : 1);
+    if (FT_Render_Glyph(g, FT_RENDER_MODE_LCD)) return false;   // subpixel raster (R,G,B per px)
     bx = g->bitmap_left; by = g->bitmap_top;
-    gw = g->bitmap.width; gh = g->bitmap.rows;
+    gw = g->bitmap.width / 3; gh = g->bitmap.rows;              // LCD bitmap is 3x wide
     if (gw == 0 || gh == 0) { gw = gh = 0; return false; }
-    cov.assign((size_t)gw * gh, 0);
-    const uint8_t* lut = cov_lut();
+    cov.assign((size_t)gw * gh * 3, 0);
     for (int yy = 0; yy < gh; yy++) {
         const uint8_t* src = g->bitmap.buffer + (size_t)yy * g->bitmap.pitch;
-        uint8_t* dst = &cov[(size_t)yy * gw];
-        for (int xx = 0; xx < gw; xx++) dst[xx] = lut[src[xx]];   // stem-darkening gamma
+        memcpy(&cov[(size_t)yy * gw * 3], src, (size_t)gw * 3);   // R,G,B coverage as-is
     }
     return true;
 }
@@ -317,6 +360,25 @@ static bool plat_raster(Ctx&, GFont& f, uint32_t cp,
 // ---------------------------------------------------------------------------
 // Platform-neutral GL 1.1 drawing
 // ---------------------------------------------------------------------------
+// The px size to RASTERIZE a glyph at for a target zoom size `sz`. Settled: the exact
+// int px, for crisp 1:1 ClearType. Mid-glide (c.anim): snap to a power of 2 -- the ~6
+// snapped sizes (4..128) cover the whole zoom range, so they warm the atlas once and
+// every later glide frame is a pure cache hit (no per-size GDI raster, which was the
+// ~8 ms/frame zoom-fps cap). The quad is then GPU-scaled to `sz` (batch_run), factor
+// <= ~1.41x, so text is only faintly soft while moving and snaps crisp on settle.
+static int anim_raster_px(float sz) {
+    if (sz < 1.f) sz = 1.f;
+    int e = (int)lroundf(log2f(sz));
+    if (e < 2) e = 2;                    // >= 4 px
+    if (e > 7) e = 7;                    // <= 128 px
+    return 1 << e;
+}
+static inline int raster_size(const Ctx& c, float sz) {
+    if (c.anim) return anim_raster_px(sz);
+    int r = (int)(sz + 0.5f);
+    return r < 1 ? 1 : r;
+}
+
 static GFont& get_font(Ctx& c, int size, bool bold) {
     uint64_t key = ((uint64_t)size << 2) | (bold ? 1 : 0);
     auto it = c.fonts.find(key);
@@ -326,14 +388,14 @@ static GFont& get_font(Ctx& c, int size, bool bold) {
     return f;
 }
 
-// Create the atlas texture lazily (first glyph). GL_LINEAR sampled, so a 1px gap
-// between glyphs stops neighbors bleeding at the quad edges. (Glyph quads are drawn
-// 1:1 pixel-snapped, so LINEAR and NEAREST are pixel-identical here anyway; small-text
-// crispness comes from the coverage gamma in cov_lut(), not the sampler.)
+// Create the atlas texture lazily (first glyph). RGB, holding per-subpixel coverage.
+// GL_LINEAR sampled, so a 1px gap between glyphs stops neighbors bleeding at the quad
+// edges. Glyph quads are drawn 1:1 pixel-snapped, so each texel maps to one screen
+// pixel and LINEAR/NEAREST are identical here.
 static void ensure_atlas(Ctx& c) {
     if (c.atlas.tex) return;
     c.atlas.size = 1024;                               // holds thousands of grid glyphs
-    std::vector<uint8_t> zero((size_t)c.atlas.size * c.atlas.size * 2, 0);
+    std::vector<uint8_t> zero((size_t)c.atlas.size * c.atlas.size * 3, 0);
     glGenTextures(1, &c.atlas.tex);
     glBindTexture(GL_TEXTURE_2D, c.atlas.tex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -341,8 +403,8 @@ static void ensure_atlas(Ctx& c) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE_ALPHA, c.atlas.size, c.atlas.size, 0,
-                 GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, zero.data());
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, c.atlas.size, c.atlas.size, 0,
+                 GL_RGB, GL_UNSIGNED_BYTE, zero.data());
     c.bound_tex = c.atlas.tex;
 }
 
@@ -354,11 +416,11 @@ static void atlas_reset(Ctx& c) {
     c.atlas.px = c.atlas.py = c.atlas.rowh = 0;
     c.atlas.gen++;
     for (auto& kv : c.fonts) kv.second.glyphs.clear();
-    std::vector<uint8_t> zero((size_t)c.atlas.size * c.atlas.size * 2, 0);
+    std::vector<uint8_t> zero((size_t)c.atlas.size * c.atlas.size * 3, 0);
     glBindTexture(GL_TEXTURE_2D, c.atlas.tex); c.bound_tex = c.atlas.tex;
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, c.atlas.size, c.atlas.size,
-                    GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, zero.data());
+                    GL_RGB, GL_UNSIGNED_BYTE, zero.data());
 }
 
 // NOTE: this may glBindTexture/glTexSubImage2D (and rebuild the atlas), so callers
@@ -370,23 +432,17 @@ static Glyph& get_glyph(Ctx& c, GFont& f, uint32_t cp) {
     ensure_atlas(c);
     Glyph g;
     std::vector<uint8_t> cov;
-    bool has = plat_raster(c, f, cp, cov, g.gw, g.gh, g.bx, g.by, g.adv);
+    bool has = plat_raster(c, f, cp, cov, g.gw, g.gh, g.bx, g.by, g.uadv);
     if (has && g.gw > 0 && g.gh > 0) {
         Atlas& a = c.atlas;
         const int pad = 1;
         if (a.px + g.gw + pad > a.size) { a.px = 0; a.py += a.rowh + pad; a.rowh = 0; }  // next shelf
         if (a.py + g.gh + pad > a.size) atlas_reset(c);     // atlas full -> flush & start over (px,py=0)
         if (g.gw + pad <= a.size && g.gh + pad <= a.size) {  // fits a fresh atlas (guards a giant glyph)
-            std::vector<uint8_t> la((size_t)g.gw * g.gh * 2);   // LUMINANCE_ALPHA: L=255, A=coverage
-            for (int yy = 0; yy < g.gh; yy++)
-                for (int xx = 0; xx < g.gw; xx++) {
-                    size_t d = ((size_t)yy * g.gw + xx) * 2;
-                    la[d] = 255; la[d + 1] = cov[(size_t)yy * g.gw + xx];
-                }
             glBindTexture(GL_TEXTURE_2D, a.tex); c.bound_tex = a.tex;
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, a.px, a.py, g.gw, g.gh,
-                            GL_LUMINANCE_ALPHA, GL_UNSIGNED_BYTE, la.data());
+            glTexSubImage2D(GL_TEXTURE_2D, 0, a.px, a.py, g.gw, g.gh,   // cov is RGB subpixel coverage
+                            GL_RGB, GL_UNSIGNED_BYTE, cov.data());
             g.u0 = (float)a.px / a.size;         g.v0 = (float)a.py / a.size;
             g.u1 = (float)(a.px + g.gw) / a.size; g.v1 = (float)(a.py + g.gh) / a.size;
             g.drawable = true;
@@ -398,33 +454,39 @@ static Glyph& get_glyph(Ctx& c, GFont& f, uint32_t cp) {
     return f.glyphs[cp];
 }
 
-static int text_width(Ctx& c, GFont& f, const uint16_t* s, int n) {
-    int w = 0;
-    for (int i = 0; i < n; i++) w += get_glyph(c, f, s[i]).adv;
-    return w;
+// Width of a run at font size `fpx`, from UNHINTED per-px advances (uadv*fpx). Because
+// uadv is size-independent, this scales linearly with zoom -- so a column that fits the
+// text at one zoom fits it at every zoom. (Hinted advances jump per integer px size and
+// made the ellipsis-trim flip in and out as you zoomed.)
+static float text_width(Ctx& c, GFont& f, const uint16_t* s, int n, float fpx) {
+    float w = 0;
+    for (int i = 0; i < n; i++) w += get_glyph(c, f, s[i]).uadv;
+    return w * fpx;
 }
 
 // Append a run of glyphs (pen baseline-left at penx,baseline) to the frame's text
-// batch: xy + uv + per-vertex rgb. All text in the frame draws in one glDrawArrays
-// (GL_MODULATE: vertex rgb x texture alpha = colored coverage). Assumes every glyph
-// is already cached (precache_text ran), so get_glyph here never touches the atlas
-// and the batched UVs stay valid.
+// batch: xy + uv + per-vertex rgb. All text in the frame draws in the two-pass
+// subpixel composite (see flush()). Assumes every glyph is already cached
+// (precache_text ran), so get_glyph here never touches the atlas and UVs stay valid.
+// `scale` maps the glyph's raster px (g.gw/gh/bx/by) to the target zoom px: 1.0 when
+// rastered at the exact size (settled), or sz/snapped when GPU-scaling mid-glide.
 static void batch_run(Ctx& c, GFont& f, const uint16_t* s, int n, float penx, float baseline,
-                      const GLfloat* col, std::vector<float>& pos,
+                      float fpx, float scale, const GLfloat* col, std::vector<float>& pos,
                       std::vector<float>& uv, std::vector<float>& cbuf) {
     for (int i = 0; i < n; i++) {
         Glyph& g = get_glyph(c, f, s[i]);
         if (g.drawable) {
-            // Snap the quad to the pixel grid so each texel maps 1:1 to a screen pixel.
-            // Off-grid quads sample between texels under GL_LINEAR and smear the glyph
-            // across two pixels, which reads as bold/fuzzy, worst at small sizes.
-            float x0 = std::floor(penx + g.bx + 0.5f), y0 = std::floor(baseline - g.by + 0.5f);
-            float x1 = x0 + g.gw, y1 = y0 + g.gh;
+            // At scale 1.0 snap the quad to the pixel grid so each texel maps 1:1 to a
+            // screen pixel (off-grid quads sample between texels under GL_LINEAR and smear,
+            // reading as bold/fuzzy at small sizes). Mid-glide the quad is scaled anyway,
+            // so only the origin is snapped.
+            float x0 = std::floor(penx + g.bx * scale + 0.5f), y0 = std::floor(baseline - g.by * scale + 0.5f);
+            float x1 = x0 + g.gw * scale, y1 = y0 + g.gh * scale;
             pos.insert(pos.end(), {x0, y0, x1, y0, x1, y1, x0, y1});
             uv.insert(uv.end(),   {g.u0, g.v0, g.u1, g.v0, g.u1, g.v1, g.u0, g.v1});
             for (int k = 0; k < 4; k++) cbuf.insert(cbuf.end(), {col[0], col[1], col[2]});
         }
-        penx += g.adv;
+        penx += g.uadv * fpx;
     }
 }
 
@@ -476,13 +538,14 @@ static void precache_text(Ctx& c, const uint8_t* p, size_t n) {
             i += 16; int32_t c2 = ri(p, i); (void)c2; float sz = rf(p, i);
             uint8_t fl = rb(p, i); uint16_t ln = ru(p, i);
             const uint16_t* ws = (const uint16_t*)(p + i); i += (size_t)ln * 2;
-            GFont& f = get_font(c, (int)(sz + 0.5f), fl & 1);
+            GFont& f = get_font(c, raster_size(c, sz), fl & 1);
             for (int k = 0; k < ln; k++) get_glyph(c, f, ws[k]);
             get_glyph(c, f, 0x2026);
         } else if (t == 'X') {
-            i += 20; float sz = rf(p, i); uint16_t ln = ru(p, i);
+            i += 20; int32_t xc = ri(p, i); (void)xc; float sz = rf(p, i);
+            uint8_t fl = rb(p, i); uint16_t ln = ru(p, i);
             const uint16_t* ws = (const uint16_t*)(p + i); i += (size_t)ln * 2;
-            GFont& f = get_font(c, (int)(sz + 0.5f), false);
+            GFont& f = get_font(c, raster_size(c, sz), fl & 1);
             for (int k = 0; k < ln; k++) get_glyph(c, f, ws[k]);
         } else if (t == 'F') { /* barrier: no text */ }
         else break;
@@ -521,8 +584,11 @@ static void draw_ops(Ctx& c, const uint8_t* p, size_t n) {
             fpos.clear(); fcol.clear();
         }
         if (!tpos.empty()) {
+            // Subpixel text: cov is per-channel (R,G,B) coverage. Composite in two blend
+            // passes to get out = text*cov + dst*(1-cov) independently per channel:
+            //   pass A  dst *= (1 - cov)         GL_REPLACE (src=cov texel), ZERO/1-SRC_COLOR
+            //   pass B  dst += text * cov        GL_MODULATE (src=color*cov), ONE/ONE
             glEnable(GL_TEXTURE_2D);
-            glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
             if (c.bound_tex != c.atlas.tex) { glBindTexture(GL_TEXTURE_2D, c.atlas.tex); c.bound_tex = c.atlas.tex; }
             glEnableClientState(GL_VERTEX_ARRAY);
             glEnableClientState(GL_TEXTURE_COORD_ARRAY);
@@ -530,7 +596,14 @@ static void draw_ops(Ctx& c, const uint8_t* p, size_t n) {
             glVertexPointer(2, GL_FLOAT, 0, tpos.data());
             glTexCoordPointer(2, GL_FLOAT, 0, tuv.data());
             glColorPointer(3, GL_FLOAT, 0, tcol.data());
-            glDrawArrays(GL_QUADS, 0, (GLsizei)(tpos.size() / 2));
+            GLsizei nverts = (GLsizei)(tpos.size() / 2);
+            glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+            glBlendFunc(GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
+            glDrawArrays(GL_QUADS, 0, nverts);
+            glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+            glBlendFunc(GL_ONE, GL_ONE);
+            glDrawArrays(GL_QUADS, 0, nverts);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);   // restore frame default
             glDisableClientState(GL_COLOR_ARRAY);
             glDisableClientState(GL_TEXTURE_COORD_ARRAY);
             glDisableClientState(GL_VERTEX_ARRAY);
@@ -583,35 +656,40 @@ static void draw_ops(Ctx& c, const uint8_t* p, size_t n) {
             int32_t c2 = ri(p, i); float sz = rf(p, i); uint8_t fl = rb(p, i); uint16_t ln = ru(p, i);
             const uint16_t* ws = (const uint16_t*)(p + i); i += (size_t)ln * 2;
             bool bold = fl & 1, center = fl & 2;
-            GFont& f = get_font(c, (int)(sz + 0.5f), bold);
-            float baseline = y + (h + f.ascent - f.descent) / 2.0f;   // vertically centered
+            int rsz = raster_size(c, sz);                        // exact px settled, power-of-2 snapped mid-glide
+            float sc = sz / (float)rsz;                          // raster px -> exact zoom px (quad scale)
+            GFont& f = get_font(c, rsz, bold);
+            float baseline = y + (h + (f.ascent - f.descent) * sc) / 2.0f;   // vertically centered
             // pad scales with the font so text keeps its proportion at every zoom
             float padL = sz * (5.f / 13.f), padR = sz * (4.f / 13.f);
             // ellipsis-trim to the available width (atlas can raster U+2026 directly)
             std::vector<uint16_t> str(ws, ws + ln);
             float avail = center ? w : (w - padL - padR);
-            if (text_width(c, f, str.data(), (int)str.size()) > avail && !str.empty()) {
+            if (text_width(c, f, str.data(), (int)str.size(), sz) > avail && !str.empty()) {
                 uint16_t dot = 0x2026;
-                int ell = get_glyph(c, f, dot).adv;
-                while (!str.empty() && text_width(c, f, str.data(), (int)str.size()) + ell > avail)
+                float ell = get_glyph(c, f, dot).uadv * sz;
+                while (!str.empty() && text_width(c, f, str.data(), (int)str.size(), sz) + ell > avail)
                     str.pop_back();
                 str.push_back(dot);
             }
-            int tw = text_width(c, f, str.data(), (int)str.size());
+            float tw = text_width(c, f, str.data(), (int)str.size(), sz);
             float penx = center ? (x + (w - tw) / 2.0f) : (x + padL);
             rgb(c2, col);
-            batch_run(c, f, str.data(), (int)str.size(), penx, baseline, col, tpos, tuv, tcol);
+            batch_run(c, f, str.data(), (int)str.size(), penx, baseline, sz, sc, col, tpos, tuv, tcol);
         } else if (t == 'X') {
             float x = rf(p, i), y = rf(p, i), w = rf(p, i), h = rf(p, i);
-            float ox = rf(p, i); int32_t c2 = ri(p, i); float sz = rf(p, i); uint16_t ln = ru(p, i);
+            float ox = rf(p, i); int32_t c2 = ri(p, i); float sz = rf(p, i);
+            uint8_t fl = rb(p, i); uint16_t ln = ru(p, i);
             const uint16_t* ws = (const uint16_t*)(p + i); i += (size_t)ln * 2;
-            GFont& f = get_font(c, (int)(sz + 0.5f), false);
-            float baseline = y + (h + f.ascent - f.descent) / 2.0f;
+            int rsz = raster_size(c, sz);
+            float sc = sz / (float)rsz;
+            GFont& f = get_font(c, rsz, fl & 1);
+            float baseline = y + (h + (f.ascent - f.descent) * sc) / 2.0f;
             flush();                                   // draw queued grid first, then clipped text
             glEnable(GL_SCISSOR_TEST);
             glScissor((int)x, c.h - (int)(y + h), (int)w, (int)h);    // clip the scrolled field
             rgb(c2, col);
-            batch_run(c, f, ws, ln, ox, baseline, col, tpos, tuv, tcol);
+            batch_run(c, f, ws, ln, ox, baseline, sz, sc, col, tpos, tuv, tcol);
             flush();
             glDisable(GL_SCISSOR_TEST);
         } else if (t == 'F') {
@@ -656,9 +734,10 @@ EXPORT void* gpu_attach(void* parent, int w, int h) {
     return c;
 }
 
-EXPORT void gpu_render(void* sp, const uint8_t* ops, int n, int clear_rgb) {
+EXPORT void gpu_render(void* sp, const uint8_t* ops, int n, int clear_rgb, int animating) {
     Ctx* c = (Ctx*)sp;
     if (!c) return;
+    c->anim = animating != 0;                   // mid zoom-glide: raster snapped + GPU-scale (raster_size)
     frame_begin(*c, clear_rgb);
     precache_text(*c, ops, (size_t)n);          // raster all glyphs before batching
     draw_ops(*c, ops, (size_t)n);
