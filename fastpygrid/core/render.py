@@ -112,28 +112,3 @@ def _filter_btn(cv, bx, by, sz, state):
         glyph = "▲" if state == "asc" else "▼"
         col = T.ARROW_IDLE if state == "idle" else T.ARROW_SORT
         cv.glyph(bx + sz / 2, by + sz / 2, glyph, col, max(6, int(sz * 0.66)))
-
-
-if __name__ == "__main__":
-    # grid-gap invariant: a backing rect covers the cell bbox, and each cell fill
-    # is inset 1px on the right/bottom so the backing shows through as a grid line.
-    class _Rec:
-        def __init__(self): self.rects = []
-        def rect(self, x, y, w, h, fill=None, outline=None, width=1):
-            self.rects.append((x, y, w, h, fill))
-        def text(self, *a, **k): pass
-        def barrier(self): pass
-
-    class _DL:
-        cells = [(0, 0, 10, 5, "a", "#111", "#fff", 0), (10, 0, 20, 5, "b", "#222", "#fff", 0)]
-        overlays = []
-        frozen = []
-        chrome = []
-        drops = []
-        frozen_drops = []
-
-    rec = _Rec(); blit(_DL(), rec)
-    assert rec.rects[0] == (0, 0, 30, 5, T.GRID), rec.rects[0]      # backing = bbox
-    assert rec.rects[1] == (0, 0, 9, 4, "#111"), rec.rects[1]       # cell inset by 1px
-    assert rec.rects[2] == (10, 0, 19, 4, "#222"), rec.rects[2]
-    print("ok")

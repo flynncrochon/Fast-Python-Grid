@@ -450,6 +450,10 @@ class GpuEngine:
         self._scroll_pos = None         # [x, y] float px the animation is easing from
         self._scroll_to = None          # [x, y] float px target
         self._scroll_last = None        # (scroll_x, scroll_y) we last wrote (detect external scroll)
+        # track-click paging: hold on the track and the view keeps gliding toward the
+        # pointer (Excel-style), stopping once the thumb reaches it. See _start_sbpage.
+        self._sbpage_after = None       # repeat timer handle, or None when idle
+        self._sbpage = None             # (axis, track_pos) currently being paged toward
         # smooth zoom: a Ctrl+wheel notch multiplies a float target, an animation eases
         # the live zoom toward it a fraction per frame (mirrors the scroll glide above).
         self._zoom_after = None         # zoom animation timer handle, or None when idle
@@ -749,8 +753,11 @@ class GpuEngine:
         have_colors = bool(f["loaded"] and (f["colors"]["bg"] or f["colors"]["fg"]))
         rows = ctl.rows(f["tf"].text) if f["loaded"] else []
         items = (["\0all"] + list(rows)) if f["loaded"] else []
+        capped_hint = f["loaded"] and ctl.capped and not f["tf"].text.strip()
         avail = g.h - y - 2 * pad
         fixed = 7 * rh + 3 * pad          # sortA, sortZ, sortcolor, clearsort, clear, filtercolor, search
+        if capped_hint:
+            fixed += rh                   # room for the "too many values" caption
         nvis = max(1, min(len(items) or 1, (avail - fixed - rh - 2 * pad) // rh, 12))
         listh = nvis * rh
         H = fixed + listh + 2 * pad + rh                      # + OK/Cancel row
@@ -770,8 +777,12 @@ class GpuEngine:
             lay[key] = (x + pad, cy, W - 2 * pad, rh, enabled)
             cy += rh
 
-        button("sortA", "Sort A → Z")
-        button("sortZ", "Sort Z → A")
+        if self.model.is_column_numeric(f["col"]):
+            button("sortA", "Sort Smallest → Largest")
+            button("sortZ", "Sort Largest → Smallest")
+        else:
+            button("sortA", "Sort A → Z")
+            button("sortZ", "Sort Z → A")
         button("sortcolor", "Sort by Color", have_colors, arrow=True)
         button("clearsort", "Clear Sort", self.model.has_sort(f["col"]))
         button("clear", "Clear Filter", self.model.has_filter(f["col"]))
@@ -780,6 +791,11 @@ class GpuEngine:
         f["tf"].draw(cv, x + pad, cy + 1, W - 2 * pad, rh - 2, _PANEL_SUB, _PANEL_FG, T.ACCENT)
         lay["field"] = (x + pad, cy + 1, W - 2 * pad, rh - 2)
         cy += rh + pad
+        if capped_hint:                    # distinct scan hit DISTINCT_CAP: warn + point to search
+            cv.text(x + pad, cy, W - 2 * pad, rh,
+                    "  Too many values (%d+) — type to search" % self.model.DISTINCT_CAP,
+                    "#8a8578")
+            cy += rh
         # checklist
         n = len(items)
         f["top"] = max(0, min(f["top"], max(0, n - nvis)))
@@ -1348,6 +1364,7 @@ class GpuEngine:
 
     def release(self):
         self._stop_autoscroll()
+        self._stop_sbpage()
         if self._dropdown:
             self._dropdown["drag"] = None; return
         if self._filter and self._filter.get("sbdrag"):
@@ -1362,6 +1379,7 @@ class GpuEngine:
         if self._filter:
             self._set_cursor(""); self._filter_hover(x, y); return
         if self._sb_hover(x, y):
+            self._set_cursor("")                   # plain arrow over the scrollbars, never resize/hand
             return
         if self._editor:                       # I-beam over the open editor's text box
             self._set_cursor("text" if self._editor_hit(x, y) is not None else "")
@@ -1483,8 +1501,8 @@ class GpuEngine:
     def double(self, x, y):
         if self._editor and self._editor_double(x, y):  # dbl-click in the open editor = select word
             return
-        if self._overlay_open():                       # modal: don't fall through to the grid
-            self.press(x, y, False, False); return
+        if self._overlay_open() or x >= self.geom.w or y >= self.geom.h:
+            self.press(x, y, False, False); return     # modal / scrollbar: don't fall through to a cell edit
         self.ctl.on_double(x, y)
 
     def leave(self):            self.ctl.set_corner_hover(False)
@@ -1632,13 +1650,23 @@ class GpuEngine:
     def _in_rect(r, x, y):
         return r is not None and r[0] <= x <= r[0] + r[2] and r[1] <= y <= r[1] + r[3]
 
+    def _sb_arrow(self, cv, rect, d):
+        """A scrollbar end button: a filled triangle pointing in direction `d`."""
+        bx, by, w, h = rect
+        cx, cy, r = bx + w / 2, by + h / 2, w * 0.22
+        cv.poly({"up":    [(cx, cy - r), (cx - r, cy + r), (cx + r, cy + r)],
+                 "down":  [(cx, cy + r), (cx - r, cy - r), (cx + r, cy - r)],
+                 "left":  [(cx - r, cy), (cx + r, cy - r), (cx + r, cy + r)],
+                 "right": [(cx + r, cy), (cx - r, cy - r), (cx - r, cy + r)]}[d], T.ARROW_IDLE)
+
     def _draw_scrollbars(self, cv, sw, sh):
         g, sbw = self.geom, self._sbw
         g.used_rows, g.used_cols = self.model.used_extent()   # trim blank overscroll from the thumb
-        # vertical bar in PIXELS (matches the sub-row scroll_y) so the thumb glides
+        # vertical bar in PIXELS (matches the sub-row scroll_y) so the thumb glides.
+        # Track is inset by one button (sbw) at each end to make room for the arrows.
         n, view = g.row_extent(self.model.nrows()) * g.row_h, g.full_rows() * g.row_h
         cv.rect(g.w, 0, sbw, g.h, fill=_SB_TRACK)                     # vertical track
-        vm = _sb_metrics(0, g.h, n, view, g.scroll_y)
+        vm = _sb_metrics(sbw, g.h - 2 * sbw, n, view, g.scroll_y)
         if vm:
             ts, tl = vm
             hot = self._vsb["hover"] or self._vsb["drag"]
@@ -1646,9 +1674,11 @@ class GpuEngine:
             self._vsb["thumb"] = (g.w, ts, sbw, tl)
         else:
             self._vsb["thumb"] = None
+        self._vsb["up"], self._vsb["down"] = (g.w, 0, sbw, sbw), (g.w, g.h - sbw, sbw, sbw)
+        self._sb_arrow(cv, self._vsb["up"], "up"); self._sb_arrow(cv, self._vsb["down"], "down")
         cv.rect(0, g.h, g.w, sbw, fill=_SB_TRACK)                     # horizontal track
         total, avail = g.col_extent(), g.w - g.freeze_x()
-        hm = _sb_metrics(0, g.w, max(1, total), avail, g.scroll_x)
+        hm = _sb_metrics(sbw, g.w - 2 * sbw, max(1, total), avail, g.scroll_x)
         if hm:
             ts, tl = hm
             hot = self._hsb["hover"] or self._hsb["drag"]
@@ -1656,42 +1686,112 @@ class GpuEngine:
             self._hsb["thumb"] = (ts, g.h, tl, sbw)
         else:
             self._hsb["thumb"] = None
+        self._hsb["left"], self._hsb["right"] = (0, g.h, sbw, sbw), (g.w - sbw, g.h, sbw, sbw)
+        self._sb_arrow(cv, self._hsb["left"], "left"); self._sb_arrow(cv, self._hsb["right"], "right")
         cv.rect(g.w, g.h, sbw, sbw, fill=_SB_TRACK)                   # corner
 
     def _sb_press(self, x, y):
-        """Grab a thumb (drag) or page on a track click. True if the click was on a bar."""
+        """Route a scrollbar press: end-arrow step, thumb drag, or track paging."""
         g = self.geom
         vt, ht = self._vsb["thumb"], self._hsb["thumb"]
         if x >= g.w and y < g.h:                                      # vertical strip
-            if self._in_rect(vt, x, y):
+            if self._in_rect(self._vsb.get("up"), x, y):
+                self._start_sbstep("v", -1)
+            elif self._in_rect(self._vsb.get("down"), x, y):
+                self._start_sbstep("v", 1)
+            elif self._in_rect(vt, x, y):
                 self._vsb.update(drag=True, grab=y - vt[1])
-            elif vt:                                                  # page by ~one screen
-                self.geom.scroll_y += (g.full_rows() - 1) * g.row_h * (1 if y > vt[1] else -1)
-                self.geom.clamp(self.model.nrows()); self.redraw()
+            elif vt:                                                  # hold -> keep gliding toward the click
+                self._start_sbpage("v", y)
             return True
         if y >= g.h and x < g.w:                                      # horizontal strip
-            if self._in_rect(ht, x, y):
+            if self._in_rect(self._hsb.get("left"), x, y):
+                self._start_sbstep("h", -1)
+            elif self._in_rect(self._hsb.get("right"), x, y):
+                self._start_sbstep("h", 1)
+            elif self._in_rect(ht, x, y):
                 self._hsb.update(drag=True, grab=x - ht[0])
             elif ht:
-                self.geom.scroll_x += (g.w - g.freeze_x()) * (1 if x > ht[0] else -1)
-                self.geom.clamp(self.model.nrows()); self.redraw()
+                self._start_sbpage("h", x)
             return True
         return x >= g.w or y >= g.h                                   # corner -> swallow
 
+    # Held scrollbar actions share one repeat timer: "page" eases toward the pointer
+    # and stops there (Excel track-click); "step" nudges a fixed amount per tick while
+    # an end arrow is held. The page ease never overshoots, so it lands without bounce.
+    _SBPAGE_MS = 16                                                  # page-ease ~60Hz
+    _SBPAGE_MAX_FRAC = 0.10                                          # per-tick cap: fraction of a viewport
+    _ARROW_MS = 40                                                   # arrow-repeat cadence
+    _ARROW_PX = 48                                                   # horizontal arrow step (px)
+
+    def _sbpage_target(self, axis, pos):
+        """Scroll offset that lands the thumb centered on track coordinate `pos`."""
+        g, sbw = self.geom, self._sbw
+        if axis == "v":
+            tl = self._vsb["thumb"][3]
+            off = _sb_offset(pos, tl / 2, sbw, g.h - 2 * sbw, tl,
+                             g.row_extent(self.model.nrows()) * g.row_h, g.full_rows() * g.row_h)
+            return min(max(0, off), int(g.max_scroll_y(self.model.nrows())))
+        tl = self._hsb["thumb"][2]
+        off = _sb_offset(pos, tl / 2, sbw, g.w - 2 * sbw, tl, max(1, g.col_extent()), g.w - g.freeze_x())
+        return min(max(0, off), int(g.max_scroll_x()))
+
+    def _start_sbpage(self, axis, pos):
+        self._sbpage = ("page", axis, pos)
+        if self._sbpage_after is None:
+            self._sbpage_tick()
+
+    def _start_sbstep(self, axis, sign):
+        self._sbpage = ("step", axis, sign)
+        if self._sbpage_after is None:
+            self._sbpage_tick()
+
+    def _stop_sbpage(self):
+        if self._sbpage_after is not None:
+            self.host.after_cancel(self._sbpage_after)   # no-op on stale ids
+            self._sbpage_after = None
+        self._sbpage = None
+
+    def _sbpage_tick(self):
+        self._sbpage_after = None
+        if not self._sbpage:
+            return
+        g, (kind, axis, val) = self.geom, self._sbpage
+        view = g.full_rows() * g.row_h if axis == "v" else (g.w - g.freeze_x())
+        cur = g.scroll_y if axis == "v" else g.scroll_x
+        if kind == "page":                               # ease toward the held pointer, stop there
+            gap = self._sbpage_target(axis, val) - cur
+            if abs(gap) <= 1:
+                self._sbpage = None; return
+            cap = int(self._SBPAGE_MAX_FRAC * view)      # cap top speed so far clicks don't lurch
+            step = max(-cap, min(cap, int(gap * self._SCROLL_EASE))) or (1 if gap > 0 else -1)
+        else:                                            # end arrow: fixed step, repeat while held
+            step = val * (g.row_h if axis == "v" else self._ARROW_PX)
+        if axis == "v":
+            g.scroll_y = max(0, cur + step)
+        else:
+            g.scroll_x = max(0, cur + step)
+        g.clamp(self.model.nrows()); self._coalesce(self._paint_now)   # one paint per idle, no backlog
+        self._sbpage_after = self.host.after(self._SBPAGE_MS if kind == "page" else self._ARROW_MS,
+                                             self._sbpage_tick)
+
     def _sb_drag(self, x, y):
-        g = self.geom
+        g, sbw = self.geom, self._sbw
+        if self._sbpage and self._sbpage[0] == "page":   # dragging along the track re-aims the glide
+            self._sbpage = ("page", self._sbpage[1], y if self._sbpage[1] == "v" else x)
+            return True
         if self._vsb["drag"] and self._vsb["thumb"]:
             tl = self._vsb["thumb"][3]
-            self.geom.scroll_y = max(0, _sb_offset(y, self._vsb["grab"], 0, g.h, tl,
+            self.geom.scroll_y = max(0, _sb_offset(y, self._vsb["grab"], sbw, g.h - 2 * sbw, tl,
                                                    g.row_extent(self.model.nrows()) * g.row_h,
                                                    g.full_rows() * g.row_h))
-            self.geom.clamp(self.model.nrows()); self.redraw(); return True
+            self.geom.clamp(self.model.nrows()); self._coalesce(self._paint_now); return True
         if self._hsb["drag"] and self._hsb["thumb"]:
             tl = self._hsb["thumb"][2]
             total = g.col_extent()
-            self.geom.scroll_x = max(0, _sb_offset(x, self._hsb["grab"], 0, g.w, tl,
+            self.geom.scroll_x = max(0, _sb_offset(x, self._hsb["grab"], sbw, g.w - 2 * sbw, tl,
                                                    max(1, total), g.w - g.freeze_x()))
-            self.geom.clamp(self.model.nrows()); self.redraw(); return True
+            self.geom.clamp(self.model.nrows()); self._coalesce(self._paint_now); return True
         return False
 
     def _sb_hover(self, x, y):
