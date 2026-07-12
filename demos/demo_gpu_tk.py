@@ -1,4 +1,4 @@
-"""Direct2D/GPU demo: the fastpygrid Gpu renderer (Windows only).
+"""OpenGL/GPU demo: the fastpygrid Gpu renderer under a Tk host.
 
     python demos/demo_gpu_tk.py                 # 100k rows on the GPU surface
     python demos/demo_gpu_tk.py --rows 500000   # stress it
@@ -49,9 +49,9 @@ def main():
     import tkinter as tk
     from tkinter import ttk
     from fastpygrid.core.gpu import _load_lib, _enable_dpi_awareness, _screen_scale
-    lib = _load_lib()
+    lib = _load_lib()                     # OpenGL 1.1 backend (glsurface)
     if lib is None:
-        raise SystemExit("Gpu surface unavailable. Build it with "
+        raise SystemExit("OpenGL surface unavailable. Build it with "
                          "`python -m fastpygrid.core.gpu --build`.")
     _enable_dpi_awareness()
     n = rows_arg(sys.argv)

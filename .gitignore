@@ -4,6 +4,8 @@ __pycache__/
 *.exp
 *.lib
 *.dll
+*.so
+*.pyd
 .venv/
 venv/
 

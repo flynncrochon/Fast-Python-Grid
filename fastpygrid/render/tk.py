@@ -13,7 +13,7 @@ from tkinter import font as tkfont
 
 from ..core import theme as T
 from ..core.coremodel import make_model
-from ..core.gpu import GpuEngine, _load_lib, _enable_dpi_awareness, _screen_scale
+from ..core.gpu import GpuEngine, _load_lib, _enable_dpi_awareness, _screen_scale, UI_FONT
 
 
 def _win_clip_html():
@@ -56,11 +56,11 @@ class GpuGrid(tk.Frame):
     normalized input methods."""
 
     def __init__(self, master, model, editable=True, frozen=0, col_w=None, scale=1.0, lib=None,
-                 uncap_rows=False, uncap_cols=False):
+                 uncap_rows=False, uncap_cols=False, filters=True):
         super().__init__(master)
         self._fpx = max(9, round(13 * scale))
-        self.font = tkfont.Font(family="Segoe UI", size=-self._fpx)
-        self.hfont = tkfont.Font(family="Segoe UI", size=-self._fpx, weight="bold")
+        self.font = tkfont.Font(family=UI_FONT, size=-self._fpx)
+        self.hfont = tkfont.Font(family=UI_FONT, size=-self._fpx, weight="bold")
         self.surface = tk.Frame(self, bg=T.BG)      # native Gpu child HWND attaches here
         self.surface.grid(row=0, column=0, sticky="nsew")
         self.grid_rowconfigure(0, weight=1)
@@ -68,7 +68,7 @@ class GpuGrid(tk.Frame):
         self.model = model
         self.engine = GpuEngine(self, model, editable=editable, frozen=frozen,
                                 col_w=col_w, scale=scale, lib=lib,
-                                uncap_rows=uncap_rows, uncap_cols=uncap_cols)
+                                uncap_rows=uncap_rows, uncap_cols=uncap_cols, filters=filters)
         E = self.engine
         c = self.surface
         c.bind("<Configure>", lambda e: E.configure_size(*self.size()))
@@ -134,7 +134,7 @@ class GpuGrid(tk.Frame):
         top.attributes("-fullscreen", not top.attributes("-fullscreen"))
 
     def context_menu(self, root, actions):
-        m = tk.Menu(self, tearoff=0)
+        m = tk.Menu(self, tearoff=0, activebackground=T.SEL_RING, activeforeground="white")
         for label, cmd, enabled in actions:
             m.add_command(label=label, command=cmd, state="normal" if enabled else "disabled")
         m.tk_popup(*root)
@@ -147,14 +147,14 @@ class GpuGrid(tk.Frame):
 
 
 def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
-               col_w=None, title="fastpygrid (gpu)", uncap_rows=False, uncap_cols=False):
-    """One-call sheet, Direct2D renderer under a Tk host. Raises if the GPU surface
-    can't be built (DLL missing / no D3D device)."""
+               col_w=None, title="fastpygrid (gpu)", uncap_rows=False, uncap_cols=False,
+               filters=True):
+    """One-call sheet under a Tk host, rendered with the OpenGL 1.1 backend
+    (cross-platform). Raises if the surface lib isn't built."""
     lib = _load_lib()
     if lib is None:
         raise RuntimeError(
-            "Gpu surface unavailable, build it with "
-            "`python -m fastpygrid.core.gpu --build`.")
+            "OpenGL surface unavailable, build it with `python -m fastpygrid.core.gpu --build`.")
     if master is None:
         _enable_dpi_awareness()
         win = tk.Tk()
@@ -166,7 +166,7 @@ def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
     model = make_model(headers, rows, editable=not view_only)
     grid = GpuGrid(win, model, editable=not view_only, frozen=frozen_columns,
                    col_w=col_w, scale=scale, lib=lib,
-                   uncap_rows=uncap_rows, uncap_cols=uncap_cols)
+                   uncap_rows=uncap_rows, uncap_cols=uncap_cols, filters=filters)
     grid.pack(fill="both", expand=True)
     win.model, win.grid_view = model, grid
     return win

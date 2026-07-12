@@ -1,11 +1,11 @@
 """Column filter/sort popup logic -- GUI-free, like FindController.
 
-The Tk and Qt filter popups are just widgets: a value checklist, a search box
+The GpuEngine filter popup is just a widget: a value checklist, a search box
 and OK/Cancel. All the actual behaviour (deferred distinct scan, per-value
 checked state, search over a capped column, and the exact commit rules for
-"clear vs keep exactly the checked members") lives here, driven identically by
-both. The widget only renders ``rows(query)`` with a checkbox per ``checked(v)``
-and forwards clicks to ``toggle`` / ``toggle_all`` and OK to ``commit``.
+"clear vs keep exactly the checked members") lives here. The popup only renders
+``rows(query)`` with a checkbox per ``checked(v)`` and forwards clicks to
+``toggle`` / ``toggle_all`` and OK to ``commit``.
 """
 
 

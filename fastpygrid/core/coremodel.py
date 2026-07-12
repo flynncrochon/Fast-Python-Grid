@@ -17,11 +17,14 @@ through this backend. Requires the DLL, make_model() raises without it.
 import ctypes
 import os
 import struct
+import sys
 
 from .model import GridModel, _clean, _grow
 from .selection import normalize as _norm_ranges
 
-_DLL = os.path.join(os.path.dirname(__file__), "gridcore.dll")   # installs into core/, beside this file
+# installs into core/, beside this file. Windows .dll, Linux .so.
+_EXT = ".dll" if sys.platform == "win32" else ".so"
+_DLL = os.path.join(os.path.dirname(__file__), "gridcore" + _EXT)
 
 
 def _load():
@@ -32,7 +35,8 @@ def _load():
     except OSError:
         return None
     P, I, C = ctypes.c_void_p, ctypes.c_int, ctypes.c_char_p
-    IP = ctypes.POINTER(I)
+    F = ctypes.c_float
+    IP, FP = ctypes.POINTER(I), ctypes.POINTER(F)
     sig = {
         "gc_new": ([I, I], P), "gc_free": ([P], None),
         "gc_ndata": ([P], I), "gc_grow_cols": ([P, I], None),
@@ -40,6 +44,9 @@ def _load():
         "gc_cell": ([P, I, I], C), "gc_set_raw": ([P, I, I, C], I),
         "gc_set_view": ([P, IP, I], None),
         "gc_copy": ([P, I, I, I, I, IP], P),
+        "gc_block": ([P, IP, I, IP, I, IP], P),
+        "gc_paint_body": ([P, IP, FP, FP, I, IP, FP, I, F, I, F, F,
+                           IP, I, I, I, I, I, I, I, IP, I, IP], P),
         "gc_delete": ([P, IP, I, IP, I, IP, I, IP], I),
         "gc_paste": ([P, I, I, C, I, IP, I, IP, I, I, I, IP], I),
         "gc_set_cell": ([P, I, I, C, IP, I, IP, I], I),
@@ -63,6 +70,14 @@ def _iarr(seq):
     return (ctypes.c_int * len(seq))(*seq), len(seq)
 
 
+def _farr(seq):
+    """A ctypes float array (or None) from a Python iterable."""
+    seq = list(seq)
+    if not seq:
+        return None
+    return (ctypes.c_float * len(seq))(*seq)
+
+
 def _pack(rows):
     """Length-prefixed (u32 len + utf-8 bytes) row-major buffer for gc_load_packed."""
     parts = []
@@ -74,14 +89,14 @@ def _pack(rows):
     return b"".join(parts)
 
 
-def make_model(headers, rows, editable=True, on_edit=None):
+def make_model(headers, rows, editable=True):
     """CoreModel, backed by the C++ arena engine. Raises if gridcore.dll is
     missing rather than silently degrading to pure-Python GridModel."""
     if not _LIB:
         raise RuntimeError(
             "gridcore.dll unavailable, build it with "
             "`python -m fastpygrid.core.gpu --build`.")
-    return CoreModel(headers, rows, editable=editable, on_edit=on_edit)
+    return CoreModel(headers, rows, editable=editable)
 
 
 class _CoreRow:
@@ -167,6 +182,59 @@ class CoreModel(GridModel):
         del self._undo[:-200]
         self._redo.clear()
 
+    def cell(self, gr, col):
+        """Hot path (~1900 calls/frame): read one cell straight from C++. The base
+        GridModel.cell does ``self._rows[r][col]`` which, on the core-backed _CoreRows,
+        allocates a _CoreRow proxy AND calls gc_ndata (a second FFI) for its bounds
+        check. gc_cell already bounds-checks row against nrows() internally (== the same
+        count, since the engine holds data rows only), so call it directly: one FFI, no
+        proxy alloc, identical result. Halves the per-cell FFI + drops an allocation."""
+        if not (0 <= col < self._w):
+            return ""
+        if gr < self._hdr:
+            return self._headers[gr][col]
+        r = self._src_data(gr - self._hdr)
+        return _LIB.gc_cell(self._core, r, col).decode("utf-8")
+
+    def block_text(self, data_rows, cols):
+        """One FFI for a whole viewport's cell text (vs ~1900 gc_cell calls). gc_block
+        returns length-prefixed UTF-8 for data_rows x cols (view-resolved in C++); we
+        unpack once into {(data_idx, col): str}."""
+        data_rows = list(data_rows); cols = list(cols)
+        ra, nr = _iarr(data_rows)
+        ca, nc = _iarr(cols)
+        if not nr or not nc:
+            return {}
+        ln = ctypes.c_int(0)
+        p = _LIB.gc_block(self._core, ra, nr, ca, nc, ctypes.byref(ln))
+        blob = ctypes.string_at(p, ln.value)
+        out = {}
+        off = 0
+        unpack = struct.Struct("<I").unpack_from
+        for di in data_rows:
+            for c in cols:
+                n = unpack(blob, off)[0]; off += 4
+                out[(di, c)] = blob[off:off + n].decode("utf-8") if n else ""
+                off += n
+        return out
+
+    def gc_paint_body(self, cols, colx, colw, grs, rowy, row_h, H, fpx, rect_w,
+                      sel, single_cell, col_txt, col_zebra, col_bg, wash_even, wash_odd, styles):
+        """Emit the wire bytes for the visible body data cells natively (the ~viewport-
+        sized hot loop). paint._blit_fast marshals geometry/colours/styles; this just
+        crosses to C++ gc_paint_body and returns its buffer. See fastpygrid/csrc."""
+        ca, ncol = _iarr(cols)
+        ga, nrow = _iarr(grs)
+        sa, nsel4 = _iarr(sel)
+        sta, nsty6 = _iarr(styles)
+        ln = ctypes.c_int(0)
+        p = _LIB.gc_paint_body(self._core, ca, _farr(colx), _farr(colw), ncol,
+                               ga, _farr(rowy), nrow, float(row_h), int(H),
+                               float(fpx), float(rect_w), sa, nsel4 // 4,
+                               1 if single_cell else 0, col_txt, col_zebra, col_bg,
+                               wash_even, wash_odd, sta, nsty6 // 6, ctypes.byref(ln))
+        return ctypes.string_at(p, ln.value)
+
     # ---- bulk hot paths -> C++ ----
     def selection_text(self, ranges):
         rs = _norm_ranges(ranges)
@@ -210,8 +278,6 @@ class CoreModel(GridModel):
             self._used = None
             if not self._is_plain():
                 self._rebuild()
-            if self.on_edit:
-                self.on_edit()
             self.changed()
         return bool(changed)
 
@@ -250,8 +316,6 @@ class CoreModel(GridModel):
             self._used = None
         if not self._is_plain():
             self._rebuild()
-        if self.on_edit:
-            self.on_edit()
         self.changed()
         end_gr = start_gr + nblock - 1
         end_col = start_col + maxw - 1
@@ -277,8 +341,6 @@ class CoreModel(GridModel):
         self._used = None
         if self._rebuilds_on_edit(gr, col):
             self._rebuild()
-        if self.on_edit:
-            self.on_edit()
         self.changed()
         return True
 
@@ -303,8 +365,6 @@ class CoreModel(GridModel):
         if not fn(self._core, tgt):
             return None
         self._install_filt(entry[1])
-        if self.on_edit:
-            self.on_edit()
         self.changed()
         return self._clamp_target(entry[2])
 

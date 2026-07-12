@@ -72,9 +72,8 @@ def _clean(cell):
 
 
 class GridModel:
-    def __init__(self, headers, rows, editable=True, on_edit=None):
+    def __init__(self, headers, rows, editable=True):
         self.editable = editable
-        self.on_edit = on_edit
         self.changed = lambda: None     # the view assigns its redraw here
         self.set_data(headers, rows)
 
@@ -106,8 +105,8 @@ class GridModel:
         self._find_cache = None    # (needle, case, scope, matches) of the last complete
                                    # scan -- lets the typing path refine instead of rescan
         self._distinct = {}       # col -> sorted distinct values (filter popup), data-edit invalidates
-        self._vlines = set()      # column indices with a thick divider on their RIGHT edge
-        self._hlines = set()      # grid-row indices with a thick divider on their BOTTOM edge
+        self._vlines = {}         # column index -> divider width px on its RIGHT edge (None = theme default)
+        self._hlines = {}         # grid-row index -> divider width px on its BOTTOM edge (None = theme default)
         self._readonly = set()    # columns that reject edits/paste/delete (still selectable)
         self._readonly_rows = set()  # SOURCE rows (-1-gr for header) that reject edits, follows sort/filter
         self._styles = {}         # (src_row | -1 for header, col) -> {fg,bg,bold}, display only
@@ -205,6 +204,13 @@ class GridModel:
             return self._headers[gr][col]
         r = self._src_data(gr - self._hdr)
         return self._rows[r][col] if 0 <= r < len(self._rows) else ""
+
+    def block_text(self, data_rows, cols):
+        """Text for a viewport block as {(data_idx, col): str}, data_idx = grid_row -
+        hdr_rows. paint() prefetches the whole body in one shot so a core-backed model
+        can batch it into a single FFI (see CoreModel.block_text). Base = per-cell."""
+        H, cell = self._hdr, self.cell
+        return {(di, c): cell(di + H, c) for di in data_rows for c in cols}
 
     def data_extent(self):
         """(last_real_row, last_col) for Ctrl+A -- header + real data, never the
@@ -336,14 +342,22 @@ class GridModel:
     # --- thick section dividers (display only, black). Positional -- keyed by
     # column / GRID-row index, not by source row, so they mark a fixed place in
     # the sheet (like the frozen divider) and do NOT follow data through sort/filter.
-    def set_vline(self, col, on=True):
-        """Thick black divider on the RIGHT edge of column `col` (on=False clears)."""
-        self._vlines.add(col) if on else self._vlines.discard(col)
+    def set_vline(self, col, on=True, width=None):
+        """Thick black divider on the RIGHT edge of column `col` (on=False clears).
+        `width` = stroke px (DPI-scaled by the renderer); None uses the theme default."""
+        if on:
+            self._vlines[col] = width
+        else:
+            self._vlines.pop(col, None)
         self.changed()
 
-    def set_hline(self, gr, on=True):
-        """Thick black divider on the BOTTOM edge of grid row `gr` (on=False clears)."""
-        self._hlines.add(gr) if on else self._hlines.discard(gr)
+    def set_hline(self, gr, on=True, width=None):
+        """Thick black divider on the BOTTOM edge of grid row `gr` (on=False clears).
+        `width` = stroke px (DPI-scaled by the renderer); None uses the theme default."""
+        if on:
+            self._hlines[gr] = width
+        else:
+            self._hlines.pop(gr, None)
         self.changed()
 
     def vlines(self):
@@ -588,10 +602,10 @@ if __name__ == "__main__":   # headless check of GridModel view/style state (edi
     assert m.cell_choices(1, 0) is None and m.dropdown_cols() == {1}
 
     # grid lines + readonly flags
-    assert m.vlines() == set() and m.hlines() == set()
-    m.set_vline(0); m.set_hline(1)
-    assert m.vlines() == {0} and m.hlines() == {1}
-    m.set_vline(0, on=False); assert m.vlines() == set()
+    assert m.vlines() == {} and m.hlines() == {}
+    m.set_vline(0); m.set_hline(1, width=4)
+    assert m.vlines() == {0: None} and m.hlines() == {1: 4}   # None = theme default width
+    m.set_vline(0, on=False); assert m.vlines() == {}
     m.set_readonly_col(0); assert m.col_readonly(0)
     m.set_readonly_col(0, on=False); assert not m.col_readonly(0)
     print("model self-check ok")
