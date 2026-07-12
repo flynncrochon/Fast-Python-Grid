@@ -294,13 +294,16 @@ def _chrome(model, C, active, hover_corner, frozen, chrome, overlays):
             if lo_x <= x <= w:                              # on-screen, not under frozen/gutter
                 overlays.append(("vline", x, 0, x, y_end, T.SECTION, cw or T.SECTION_W))
     if hl:
-        vis = set(data_rows)
         # uncapped cols: extend through the phantom columns to the viewport right edge
         x_end = w if g.uncap_cols else min(w, g.col_x(ncols - 1) + g.col_w[ncols - 1])
-        for gr, rw in hl.items():
-            if gr < H or gr in vis:                         # header rows pinned, data must be visible
-                y = g.row_y(gr) + g.row_h_at(gr)           # bottom edge of row gr
-                overlays.append(("hline", g.gutter_w, y, x_end, y, T.SECTION, rw or T.SECTION_W))
+        # hlines follow their source row, so walk the rows actually on screen (pinned
+        # headers + visible data) and ask each for its divider -- no src->grid reverse map.
+        for gr in list(range(H)) + data_rows:
+            rw = model.hline_width(gr)
+            if rw is model._NO_HLINE:
+                continue
+            y = g.row_y(gr) + g.row_h_at(gr)               # bottom edge of row gr
+            overlays.append(("hline", g.gutter_w, y, x_end, y, T.SECTION, rw or T.SECTION_W))
     # corner triangle: selection orange ONLY when the whole sheet is selected
     # (Ctrl+A / a drag spanning header+data extent), hover orange on hover, else grey.
     lr, lc = model.data_extent()
