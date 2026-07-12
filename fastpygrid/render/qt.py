@@ -7,7 +7,7 @@ winId), fonts, event translation, clipboard and context menu, and implements the
 ~dozen host-adapter methods the engine calls. The engine is reused UNCHANGED.
 
 All chrome is custom Gpu-drawn, so the widget IS the surface -- no sibling Qt
-widgets. Windows-only (Direct2D), raises if the DLL/GPU surface can't build.
+widgets. Rendered with OpenGL (glsurface); raises if the DLL/GPU surface can't build.
 """
 import os
 
@@ -22,8 +22,9 @@ os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..core import theme as T
 from ..core.coremodel import make_model
-from ..core.gpu import GpuEngine, _load_lib, _enable_dpi_awareness, _screen_scale
+from ..core.gpu import GpuEngine, _load_lib, _enable_dpi_awareness, _screen_scale, UI_FONT
 
 # Qt key -> Tk-style keysym the engine checks (grid nav + TextField overlays).
 _KEYS = {
@@ -54,7 +55,7 @@ class GpuQtGrid(QtWidgets.QWidget):
     child HWND parents to winId() and does all drawing. Qt just forwards events."""
 
     def __init__(self, parent, model, editable=True, frozen=0, col_w=None, scale=1.0, lib=None,
-                 uncap_rows=False, uncap_cols=False):
+                 uncap_rows=False, uncap_cols=False, filters=True):
         super().__init__(parent)
         # Native, self-painted: Qt won't draw over the Gpu child, and winId() is a real HWND.
         self.setAttribute(QtCore.Qt.WA_NativeWindow, True)
@@ -65,15 +66,15 @@ class GpuQtGrid(QtWidgets.QWidget):
         self.setMouseTracking(True)                 # deliver hover moves (no button held)
 
         self._fpx = max(9, round(13 * scale))
-        self.font = QtGui.QFont("Segoe UI"); self.font.setPixelSize(self._fpx)
-        self.hfont = QtGui.QFont("Segoe UI"); self.hfont.setPixelSize(self._fpx)
+        self.font = QtGui.QFont(UI_FONT); self.font.setPixelSize(self._fpx)
+        self.hfont = QtGui.QFont(UI_FONT); self.hfont.setPixelSize(self._fpx)
         self.hfont.setBold(True)
         self._fm = {False: QtGui.QFontMetrics(self.font), True: QtGui.QFontMetrics(self.hfont)}
 
         self.model = model
         self.engine = GpuEngine(self, model, editable=editable, frozen=frozen,
                                 col_w=col_w, scale=scale, lib=lib,
-                                uncap_rows=uncap_rows, uncap_cols=uncap_cols)
+                                uncap_rows=uncap_rows, uncap_cols=uncap_cols, filters=filters)
 
     def paintEngine(self):
         return None                                 # foreign HWND owns the pixels
@@ -119,14 +120,17 @@ class GpuQtGrid(QtWidgets.QWidget):
     def wheelEvent(self, e):
         dx, dy = e.angleDelta().x(), e.angleDelta().y()
         m = e.modifiers()
+        # Float division, not // : high-res wheels/trackpads deliver sub-120 deltas, and
+        # floor division truncates them asymmetrically (up -> 0, down -> -1), so up feels
+        # dead while down over-scrolls. Fractional notches scroll proportionally instead.
         if m & QtCore.Qt.ControlModifier:
             self.engine.zoom(1.1 if dy > 0 else 1 / 1.1)
         elif m & QtCore.Qt.ShiftModifier:
-            self.engine._scroll_px(-(dy // 120) * 40)
+            self.engine._scroll_px(-dy / 120.0 * 40)
         elif abs(dx) > abs(dy):                       # trackpad horizontal swipe
-            self.engine._scroll_px(-(dx // 120) * 40)
+            self.engine._scroll_px(-dx / 120.0 * 40)
         else:
-            self.engine.wheel(dy // 120)
+            self.engine.wheel(dy / 120.0)
 
     def keyPressEvent(self, e):
         if e.key() == QtCore.Qt.Key_F11:
@@ -193,6 +197,7 @@ class GpuQtGrid(QtWidgets.QWidget):
 
     def context_menu(self, root, actions):
         m = QtWidgets.QMenu(self)
+        m.setStyleSheet(f"QMenu::item:selected {{ background: {T.SEL_RING}; color: white; }}")
         for label, cmd, enabled in actions:
             a = m.addAction(label); a.setEnabled(enabled); a.triggered.connect(cmd)
         m.exec(QtCore.QPoint(int(root[0]), int(root[1])))
@@ -214,15 +219,15 @@ class GpuQtGrid(QtWidgets.QWidget):
 
 
 def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
-               col_w=None, title="fastpygrid (gpu-qt)", uncap_rows=False, uncap_cols=False):
-    """One-call sheet, Direct2D renderer under a Qt host. Creates a QApplication if
-    none exists. Returns the window (with .model, .grid_view, .mainloop()). Raises
-    if the GPU surface can't be built (DLL missing / no D3D device)."""
+               col_w=None, title="fastpygrid (gpu-qt)", uncap_rows=False, uncap_cols=False,
+               filters=True):
+    """One-call sheet under a Qt host, rendered with the OpenGL 1.1 backend
+    (cross-platform). Creates a QApplication if none exists. Returns the window (with
+    .model, .grid_view, .mainloop()). Raises if the surface lib isn't built."""
     lib = _load_lib()
     if lib is None:
         raise RuntimeError(
-            "Gpu surface unavailable -- build it with "
-            "`python -m fastpygrid.core.gpu --build`.")
+            "OpenGL surface unavailable -- build it with `python -m fastpygrid.core.gpu --build`.")
     app = QtWidgets.QApplication.instance()
     if app is None:
         _enable_dpi_awareness()          # process DPI-aware, Qt scaling off via env (top of file)
@@ -234,7 +239,7 @@ def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
     win.resize(round(980 * scale), round(620 * scale))
     grid = GpuQtGrid(win, model, editable=not view_only, frozen=frozen_columns,
                      col_w=col_w, scale=scale, lib=lib,
-                     uncap_rows=uncap_rows, uncap_cols=uncap_cols)
+                     uncap_rows=uncap_rows, uncap_cols=uncap_cols, filters=filters)
     lay = QtWidgets.QVBoxLayout(win)
     lay.setContentsMargins(0, 0, 0, 0)
     lay.addWidget(grid)

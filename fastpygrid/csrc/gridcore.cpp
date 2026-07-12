@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <tuple>
 #include <cctype>
+#include <unordered_map>
 
 // Undo entry as struct-of-arrays: one flat index per changed cell + the old
 // text (moved in from the cell during the op -- no copy on the hot path). `nw`
@@ -65,23 +66,56 @@ static void pack_str(std::string& buf, const std::string& s) {
     buf.append(s);
 }
 
+// --- little-endian wire writers (mirror GpuCanvas' struct.pack for the R/T ops) ---
+static inline void put_f32(std::string& o, float v)   { o.append((const char*)&v, 4); }
+static inline void put_i32(std::string& o, int32_t v) { o.append((const char*)&v, 4); }
+static inline void put_u16(std::string& o, uint16_t v){ o.append((const char*)&v, 2); }
+
+// Decode UTF-8 -> UTF-16 code units (surrogate pairs for astral). Matches Python's
+// str.encode('utf-16-le') of the same text, so gc_paint_body's 'T' bytes are identical
+// to GpuCanvas.text()'s. Invalid bytes -> U+FFFD (data is valid UTF-8 in practice).
+static void utf8_to_utf16(const std::string& s, std::vector<uint16_t>& out) {
+    size_t i = 0, n = s.size();
+    while (i < n) {
+        unsigned char c = (unsigned char)s[i];
+        uint32_t cp; int len;
+        if (c < 0x80)            { cp = c;        len = 1; }
+        else if ((c >> 5) == 0x6){ cp = c & 0x1f; len = 2; }
+        else if ((c >> 4) == 0xe){ cp = c & 0x0f; len = 3; }
+        else if ((c >> 3) == 0x1e){cp = c & 0x07; len = 4; }
+        else                     { cp = 0xFFFD;  len = 1; }
+        if (i + len > n) { cp = 0xFFFD; len = 1; }
+        else for (int k = 1; k < len; k++) cp = (cp << 6) | ((unsigned char)s[i + k] & 0x3f);
+        i += len;
+        if (cp <= 0xFFFF) out.push_back((uint16_t)cp);
+        else { cp -= 0x10000; out.push_back((uint16_t)(0xD800 + (cp >> 10)));
+                               out.push_back((uint16_t)(0xDC00 + (cp & 0x3FF))); }
+    }
+}
+
+#ifdef _WIN32
+  #define EXPORT __declspec(dllexport)
+#else
+  #define EXPORT __attribute__((visibility("default")))
+#endif
+
 extern "C" {
 
-__declspec(dllexport) void* gc_new(int cols, int hdr) {
+EXPORT void* gc_new(int cols, int hdr) {
     Core* c = new Core();
     c->cols = cols; c->hdr = hdr;
     c->d.resize((size_t)hdr * cols);     // header rows start blank, loaded via gc_set_raw
     return c;
 }
-__declspec(dllexport) void gc_free(void* h) { delete (Core*)h; }
+EXPORT void gc_free(void* h) { delete (Core*)h; }
 
-__declspec(dllexport) int gc_ndata(void* h) { return ((Core*)h)->ndata(); }
+EXPORT int gc_ndata(void* h) { return ((Core*)h)->ndata(); }
 
 // Grow the COLUMN count (editing a cell past the last column extends
 // the sheet). Re-strides the row-major buffer -- every row gains blank trailing
 // cells -- and remaps the undo/redo flat indices (row*cols+col) to the new stride
 // so history survives the widen. No-op if new_cols <= cols. No undo entry itself.
-__declspec(dllexport) void gc_grow_cols(void* h, int new_cols) {
+EXPORT void gc_grow_cols(void* h, int new_cols) {
     Core* c = (Core*)h;
     int old = c->cols;
     if (new_cols <= old) return;
@@ -101,7 +135,7 @@ __declspec(dllexport) void gc_grow_cols(void* h, int new_cols) {
 
 // Bulk-load data rows from a length-prefixed buffer (u32 len + bytes per cell,
 // row-major, nrows*cols cells). Safe for any bytes (tabs/newlines in cells).
-__declspec(dllexport) void gc_load_packed(void* h, const char* buf, int nrows) {
+EXPORT void gc_load_packed(void* h, const char* buf, int nrows) {
     Core* c = (Core*)h;
     c->d.assign((size_t)(c->hdr + nrows) * c->cols, std::string());
     const char* p = buf;
@@ -112,14 +146,14 @@ __declspec(dllexport) void gc_load_packed(void* h, const char* buf, int nrows) {
     }
 }
 
-__declspec(dllexport) const char* gc_cell(void* h, int row, int col) {
+EXPORT const char* gc_cell(void* h, int row, int col) {
     Core* c = (Core*)h;
     if (row >= 0 && row < c->nrows() && col >= 0 && col < c->cols)
         return c->at(row, col).c_str();
     return "";
 }
 // low-level set by combined row (no undo) -- used for header load, materialise, replay
-__declspec(dllexport) int gc_set_raw(void* h, int row, int col, const char* s) {
+EXPORT int gc_set_raw(void* h, int row, int col, const char* s) {
     Core* c = (Core*)h;
     if (row < 0 || row >= c->nrows() || col < 0 || col >= c->cols) return 0;
     std::string& cell = c->at(row, col);
@@ -128,7 +162,7 @@ __declspec(dllexport) int gc_set_raw(void* h, int row, int col, const char* s) {
     return 1;
 }
 
-__declspec(dllexport) void gc_set_view(void* h, const int* arr, int n) {
+EXPORT void gc_set_view(void* h, const int* arr, int n) {
     Core* c = (Core*)h;
     if (n < 0) { c->plain = true; c->view.clear(); }
     else { c->plain = false; c->view.assign(arr, arr + n); }
@@ -162,7 +196,7 @@ static int commit(Core* c) {                     // returns #changes
 }
 
 // ---- COPY: grid rect -> TSV (\t\n\r in a cell -> space) ----
-__declspec(dllexport) const char* gc_copy(void* h, int r1, int c1, int r2, int c2, int* out_len) {
+EXPORT const char* gc_copy(void* h, int r1, int c1, int r2, int c2, int* out_len) {
     Core* c = (Core*)h;
     if (c1 < 0) c1 = 0;
     if (c2 >= c->cols) c2 = c->cols - 1;
@@ -181,6 +215,90 @@ __declspec(dllexport) const char* gc_copy(void* h, int r1, int c1, int r2, int c
     return o.data();
 }
 
+// Batch-read the text of a viewport block in ONE call: for each requested data row
+// (grid index, view-resolved via combined()) x each requested column, emit u32 byte-
+// length + UTF-8 bytes, row-major. Pad/oob cells emit length 0. Lets the renderer
+// prefetch a whole frame's cell text with a single FFI instead of one gc_cell per
+// cell (~1900/frame). Returns c->out (valid until the next call that reuses it).
+EXPORT const char* gc_block(void* h, const int* rows, int nr,
+                                           const int* cols, int nc, int* out_len) {
+    Core* c = (Core*)h;
+    std::string& o = c->out; o.clear();
+    for (int i = 0; i < nr; i++) {
+        int row = c->combined(rows[i]);
+        for (int j = 0; j < nc; j++) {
+            int col = cols[j];
+            uint32_t n = 0;
+            const std::string* s = nullptr;
+            if (row >= 0 && col >= 0 && col < c->cols) { s = &c->at(row, col); n = (uint32_t)s->size(); }
+            o.append((const char*)&n, 4);
+            if (n) o.append(*s);
+        }
+    }
+    *out_len = (int)o.size();
+    return o.data();
+}
+
+// Emit the wire ops (one 'R' fill + optional 'T' text per cell) for the visible BODY
+// data cells, in paint.py's exact emission order: caller passes columns already
+// ordered (scrollable then frozen), each iterated over all visible data rows. This is
+// the ~1900-cell hot loop moved off Python. All colours are precomputed by the caller
+// (no blending here); styled cells (sparse) override fg/bg/bold, keyed (source_row,col).
+// Layout mirrors GpuCanvas.rect(x,y,w-1,h-1,fill=bg) + text(x,y,w,h,txt,fg,bold), so
+// the bytes are identical to paint()+blit() for a find-inactive frame.
+//   cols/colx/colw : ncol visible columns (col index, x, width)
+//   grs/rowy       : nrow visible data rows (grid index, y)
+//   styles         : nsty * [src_row, col, fg, base_bg(-1=none), base_washed, bold]
+//   sel            : nsel * [r1,c1,r2,c2]  (normalized selection, grid coords)
+EXPORT const char* gc_paint_body(void* h,
+        const int* cols, const float* colx, const float* colw, int ncol,
+        const int* grs, const float* rowy, int nrow,
+        float row_h, int H, float fpx, float rect_w,
+        const int* sel, int nsel, int single_cell,
+        int col_txt, int col_zebra, int col_bg, int wash_even, int wash_odd,
+        const int* styles, int nsty, int* out_len) {
+    Core* c = (Core*)h;
+    std::unordered_map<int64_t, const int*> smap;
+    smap.reserve(nsty * 2);
+    for (int i = 0; i < nsty; i++) { const int* e = styles + i * 6; smap[((int64_t)e[0] << 20) | (uint32_t)e[1]] = e; }
+    std::string& o = c->out; o.clear();
+    std::vector<uint16_t> u16;
+    for (int k = 0; k < ncol; k++) {
+        int col = cols[k]; float x = colx[k], w = colw[k];
+        bool valid_col = (col >= 0 && col < c->cols);
+        for (int r = 0; r < nrow; r++) {
+            int gr = grs[r]; float y = rowy[r];
+            int src = c->combined(gr - H);
+            bool zeb = ((gr - H) % 2 == 0);
+            int fg = col_txt, base = -1, basew = -1, bold = 0;
+            if (src >= 0) {
+                auto it = smap.find(((int64_t)src << 20) | (uint32_t)col);
+                if (it != smap.end()) { const int* e = it->second; fg = e[2]; base = e[3]; basew = e[4]; bold = e[5]; }
+            }
+            bool washed = false;
+            if (!single_cell)
+                for (int s = 0; s < nsel; s++) {
+                    const int* R = sel + s * 4;
+                    if (R[0] <= gr && gr <= R[2] && R[1] <= col && col <= R[3]) { washed = true; break; }
+                }
+            int bg = washed ? (base >= 0 ? basew : (zeb ? wash_odd : wash_even))
+                            : (base >= 0 ? base  : (zeb ? col_zebra : col_bg));
+            o.push_back('R'); put_f32(o, x); put_f32(o, y); put_f32(o, w - 1); put_f32(o, row_h - 1);
+            put_i32(o, bg); put_i32(o, -1); put_f32(o, rect_w);
+            const std::string* txt = (valid_col && src >= 0) ? &c->at(src, col) : nullptr;
+            if (txt && !txt->empty()) {
+                u16.clear(); utf8_to_utf16(*txt, u16);
+                o.push_back('T'); put_f32(o, x); put_f32(o, y); put_f32(o, w); put_f32(o, row_h);
+                put_i32(o, fg); put_f32(o, fpx); o.push_back((char)(uint8_t)(bold ? 1 : 0));
+                put_u16(o, (uint16_t)u16.size());
+                o.append((const char*)u16.data(), u16.size() * 2);
+            }
+        }
+    }
+    *out_len = (int)o.size();
+    return o.data();
+}
+
 static bool has(const int* a, int n, int v) {
     for (int i = 0; i < n; i++) if (a[i] == v) return true;
     return false;
@@ -189,7 +307,7 @@ static bool has(const int* a, int n, int v) {
 // ---- DELETE: clear grid rects (flat r1,c1,r2,c2,...), skip readonly cols/rows.
 // rows are DATA grid indices, source key = source row index. One undo entry.
 // Returns #cells changed, first cleared cell written to out_tgt (gr,col).
-__declspec(dllexport) int gc_delete(void* h, const int* rects, int nrects,
+EXPORT int gc_delete(void* h, const int* rects, int nrects,
                                     const int* ro_cols, int n_rc,
                                     const int* ro_rows, int n_rr, int* out_tgt) {
     Core* c = (Core*)h;
@@ -228,7 +346,7 @@ __declspec(dllexport) int gc_delete(void* h, const int* rects, int nrects,
 // Parses the raw clipboard in C++ (no Python split): trims trailing all-blank
 // rows itself and returns the block dims in out_dims[0]=rows, [1]=maxcols. ----
 // sel_nr/sel_nc = selection size, a 1x1 clipboard over a bigger selection fills it.
-__declspec(dllexport) int gc_paste(void* h, int r0, int c0, const char* text, int len,
+EXPORT int gc_paste(void* h, int r0, int c0, const char* text, int len,
                                    const int* ro_cols, int n_rc,
                                    const int* ro_rows, int n_rr,
                                    int sel_nr, int sel_nc, int* out_dims) {
@@ -319,7 +437,7 @@ __declspec(dllexport) int gc_paste(void* h, int r0, int c0, const char* text, in
 }
 
 // ---- SET one grid cell (raw string, undo-recorded, readonly + materialise) ----
-__declspec(dllexport) int gc_set_cell(void* h, int gr, int col, const char* s,
+EXPORT int gc_set_cell(void* h, int gr, int col, const char* s,
                                       const int* ro_cols, int n_rc,
                                       const int* ro_rows, int n_rr) {
     Core* c = (Core*)h;
@@ -348,7 +466,7 @@ __declspec(dllexport) int gc_set_cell(void* h, int gr, int col, const char* s,
 
 // ---- UNDO / REDO of cell edits. Returns 1 if applied, target in out_tgt.
 // Copy (not move) from the log so entries survive repeated undo/redo cycles.
-__declspec(dllexport) int gc_undo(void* h, int* out_tgt) {
+EXPORT int gc_undo(void* h, int* out_tgt) {
     Core* c = (Core*)h;
     if (c->undo.empty()) return 0;
     Edit e = std::move(c->undo.back()); c->undo.pop_back();
@@ -359,7 +477,7 @@ __declspec(dllexport) int gc_undo(void* h, int* out_tgt) {
     c->redo.push_back(std::move(e));
     return 1;
 }
-__declspec(dllexport) int gc_redo(void* h, int* out_tgt) {
+EXPORT int gc_redo(void* h, int* out_tgt) {
     Core* c = (Core*)h;
     if (c->redo.empty()) return 0;
     Edit e = std::move(c->redo.back()); c->redo.pop_back();
@@ -375,7 +493,7 @@ __declspec(dllexport) int gc_redo(void* h, int* out_tgt) {
 // ---- FIND: substring over grid cells. Returns packed (row,col) int pairs. ----
 // scope: flat [r1,c1,r2,c2,...] rects, or NULL for full scan. case_sensitive 0/1.
 // Walks header rows + data rows in view order (grid-row coords, like paint).
-__declspec(dllexport) const char* gc_find(void* h, const char* needle, int nlen, int cs,
+EXPORT const char* gc_find(void* h, const char* needle, int nlen, int cs,
                                           const int* scope, int nscope, int limit,
                                           int* out_count, int* out_capped) {
     Core* c = (Core*)h;

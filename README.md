@@ -2,9 +2,9 @@
   <img src="docs/logo.svg" alt="Fast Python Grid" width="420">
 </p>
 
-A GPU-painted spreadsheet grid for tens of thousands of rows. Only visible cells
+An OpenGL spreadsheet grid for tens of thousands of rows. Only visible cells
 are built, so scroll, select, filter and find stay instant. A GUI-free core
-holds the logic. One Direct2D engine draws it, under a thin Tk or Qt host.
+holds the logic, under a thin Tk or Qt host.
 
 ![fastpygrid sample grid: a multi-cell selection with a column filter popup open](docs/screenshot.png)
 
@@ -12,11 +12,11 @@ holds the logic. One Direct2D engine draws it, under a thin Tk or Qt host.
 
 | Requirement | Details |
 |---|---|
-| **Windows** | The renderer is Direct2D (`core/surface.dll`): needs Windows. No macOS/Linux backend. |
+| **Platform** | The renderer is OpenGL 1.1 (`core/glsurface.dll` / `.so`): Windows (WGL + GDI) and Linux (GLX + FreeType). No macOS backend. |
 | **Python 3.8+** | |
 | **Tk host** | Standard library only (`tkinter`). |
 | **Qt host** | Needs `PySide6` (`pip install PySide6`), the only dependency, and only for the Qt host. |
-| **Native DLLs** | The wheel bundles `surface.dll` (Direct2D renderer) and `gridcore.dll` (C++ data core). Both required; build from source needs CMake + MSVC. |
+| **Native libs** | The wheel bundles `glsurface` (OpenGL renderer) and `gridcore` (C++ data core). Both required; build from source needs CMake + a C++17 compiler (MSVC on Windows; GCC/Clang + GL/X11/FreeType dev headers on Linux). |
 
 ## Install
 
@@ -59,7 +59,7 @@ are the header and data starts at `gr=header_rows` (so `gr=1` with one header ro
 ### `make_sheet(headers, rows, ...)`
 
 Builds the model, opens the window, returns it. Raises `RuntimeError` if a required
-native DLL (`surface.dll` or `gridcore.dll`) is missing.
+native lib (`glsurface` or `gridcore`) is missing.
 
 | Argument | Type | Default | What it does |
 |---|---|---|---|
@@ -72,6 +72,7 @@ native DLL (`surface.dll` or `gridcore.dll`) is missing.
 | `title` | `str` | host default | Window title. |
 | `uncap_rows` | `bool` | `False` | Lift the built-in row-count cap. |
 | `uncap_cols` | `bool` | `False` | Lift the built-in column-count cap. |
+| `filters` | `bool` | `True` | Show the per-column header filter/sort ▼ dropdowns. `False` hides them. |
 
 Returns the host window: a `tk.Tk` (or `Toplevel`) for Tk, a `QWidget` for Qt.
 Both carry `.mainloop()` (Qt aliases `app.exec()`), `.model` (the `GridModel`),
@@ -153,13 +154,21 @@ MSVC, and Python's `build`. Re-run after any `.cpp`/`.py` change.
 
 ## Run demo
 
-`demos/setup.bat` creates `demos/.venv` and installs the freshly built wheel.
-Run it after `build.bat`, then:
+After `build.bat`, launch the OpenGL demo. It copies the built DLLs out of
+`dist/*.whl` on first run, then prompts for the tk or qt host:
 
 ```bash
+demos\demo.bat                                           # prompts for tk or qt
 demos\demo.bat tk                                        # tkinter host, 100k rows
 demos\demo.bat qt                                        # Qt host, same data
 demos\demo.bat tk --rows 500000                          # stress it
+```
+
+The tk host needs nothing extra. The qt host needs PySide6: run `demos/setup.bat`
+once to create `demos/.venv` (PySide6 + the wheel), which `demo.bat` then uses
+automatically.
+
+```bash
 demos\.venv\Scripts\python scripts/tests/check_select.py # selection-state-machine check
 ```
 
@@ -168,10 +177,10 @@ demos\.venv\Scripts\python scripts/tests/check_select.py # selection-state-machi
 ```
 Fast-Python-Grid/
 |-- fastpygrid/             # the python package
-|   |-- core/               # model, geometry, selection, paint() -> display list, gpu.py (Direct2D engine)
-|   |                       #   surface.dll + gridcore.dll compile in here, beside their loaders (not committed)
+|   |-- core/               # model, geometry, selection, rendering, gpu.py (OpenGL engine)
+|   |                       #   glsurface + gridcore libs compile in here, beside their loaders (not committed)
 |   |-- render/             # tk.py (tkinter host), qt.py (PySide6 host)
-|   `-- csrc/               # C++ sources: surface.cpp, gridcore.cpp
+|   `-- csrc/               # C++ sources: glsurface.cpp, gridcore.cpp
 |-- CMakeLists.txt          # compiles the DLLs (scikit-build-core)
 |-- build.bat               # python -m build -> dist/*.whl + *.tar.gz (same as CI/PyPI)
 |-- demos/                  # demo_gpu_tk.py, demo_gpu_qt.py, _data.py, setup.bat (wheel into demos/.venv)

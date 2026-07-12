@@ -219,7 +219,12 @@ class GridController:
 
     # --- zoom (Ctrl + wheel) ---------------------------------------------
     def zoom_by(self, factor):
-        z = max(0.4, min(4.0, self._zoom * factor))
+        self.zoom_to(self._zoom * factor)
+
+    def zoom_to(self, z):
+        """Apply an absolute zoom factor (clamped). The engine eases toward a target
+        by calling this each animation frame; a notch is factor 1.1 via zoom_by."""
+        z = max(0.4, min(4.0, z))
         if z == self._zoom:
             return
         self._zoom = z
@@ -228,7 +233,9 @@ class GridController:
                               max(24, round(self._base_gutter * z)),
                               [max(20, round(w * z)) for w in self._base_w])
         self.geom.clamp(self.model.nrows())
-        self.host.after_geometry_change()
+        # One repaint per frame: the eased zoom calls this ~90x/sec, and the extra
+        # after_geometry_change() present (redundant with redraw() in this engine)
+        # doubled the GPU work per frame and read as lag. redraw() alone is enough.
         self.host.redraw()
 
     # --- keyboard ---------------------------------------------------------

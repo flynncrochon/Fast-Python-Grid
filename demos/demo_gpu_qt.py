@@ -1,4 +1,4 @@
-"""Direct2D/GPU demo under a Qt (PySide6) host -- same engine as demo_gpu_tk.py.
+"""OpenGL/GPU demo under a Qt (PySide6) host -- same engine as demo_gpu_tk.py.
 
     python demos/demo_gpu_qt.py                 # 100k rows on the GPU surface
     python demos/demo_gpu_qt.py --rows 500000   # stress it
