@@ -4,15 +4,8 @@ The one copy of "what does a click / drag / arrow do" lives in
 core/selection.py and drives BOTH renderers -- so this asserts it directly,
 with no GUI. Spreadsheet semantics: plain click resets, Ctrl banks a range, Shift
 extends, whole-row/col/select-all, Ctrl+arrow block jumps.
-
-    python scripts/tests/check_select.py
 """
-import os
-import sys
-
-# needs fastpygrid installed -- run demos/setup.bat, or `pip install .`
-
-from fastpygrid.core import selection as S                        # noqa: E402
+from fastpygrid.core import selection as S
 
 B = dict(top_hrow=0, last_row=99, last_col=6)     # a 100x7 grid
 
@@ -22,7 +15,7 @@ def click(region, r, c, sel=(0, 0, 0, 0), extra=(), anchor=(0, 0), ctrl=False, s
                            ctrl=ctrl, shift=shift, **B)
 
 
-def main():
+def test_selection_cases():
     # plain cell click -> single-cell selection, anchor + active on it
     sel, extra, active, anchor = click("cell", 5, 3)
     assert sel == (5, 3, 5, 3) and extra == [] and active == (5, 3) and anchor == (5, 3)
@@ -60,9 +53,3 @@ def main():
                                          shift=False, ctrl=True,
                                          occupied_row=lambda r: r in filled, **B)
     assert active[0] == 3, active
-
-    print("check_select OK: 11 selection cases pass")
-
-
-if __name__ == "__main__":
-    main()

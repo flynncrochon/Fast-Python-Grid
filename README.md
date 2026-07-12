@@ -48,6 +48,20 @@ win = make_sheet(headers, rows, frozen_columns=2)
 win.mainloop()                                          # aliases app.exec()
 ```
 
+### From a pandas DataFrame
+
+`dataframe_to_grid(df)` turns a DataFrame into `(headers, rows)` you splat straight
+into `make_sheet` / `make_model`. pandas is **not** a dependency -- it duck-types the
+DataFrame, so it only needs pandas if you actually pass one. A MultiIndex columns
+frame becomes stacked headers (one row per level); `NaN`/`None` render blank.
+
+```python
+from fastpygrid import dataframe_to_grid
+from fastpygrid.render.tk import make_sheet
+win = make_sheet(*dataframe_to_grid(df), frozen_columns=2)
+win.mainloop()
+```
+
 ## Interface
 
 `make_sheet()` (in both `fastpygrid.render.tk` and `fastpygrid.render.qt`) opens a
@@ -169,7 +183,7 @@ once to create `demos/.venv` (PySide6 + the wheel), which `demo.bat` then uses
 automatically.
 
 ```bash
-demos\.venv\Scripts\python scripts/tests/check_select.py # selection-state-machine check
+demos\.venv\Scripts\python -m pytest tests/                # headless self-checks
 ```
 
 ## Layout
@@ -183,8 +197,6 @@ Fast-Python-Grid/
 |   `-- csrc/               # C++ sources: glsurface.cpp, gridcore.cpp
 |-- CMakeLists.txt          # compiles the DLLs (scikit-build-core)
 |-- build.bat               # python -m build -> dist/*.whl + *.tar.gz (same as CI/PyPI)
-|-- demos/                  # demo_gpu_tk.py, demo_gpu_qt.py, _data.py, setup.bat (wheel into demos/.venv)
-`-- scripts/
-    |-- tests/              # check_select.py (needs fastpygrid installed)
-    `-- benchmarks/         # bench_geometry.py (need fastpygrid installed)
+|-- demos/                  # demo_gpu_tk.py, demo_gpu_qt.py, _data.py, benchmark_*.py, setup.bat (wheel into demos/.venv)
+`-- tests/                  # headless self-checks (pytest; needs fastpygrid installed)
 ```

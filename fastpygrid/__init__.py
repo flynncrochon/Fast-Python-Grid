@@ -11,5 +11,6 @@ Both hosts drive the SAME OpenGL engine, so behaviour and looks match.
 """
 from .core import selection, theme
 from .core.coremodel import make_model
+from .frame import dataframe_to_grid
 
-__all__ = ["make_model", "selection", "theme"]
+__all__ = ["make_model", "dataframe_to_grid", "selection", "theme"]

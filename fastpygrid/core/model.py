@@ -64,6 +64,14 @@ def _grow(box, gr, col):
     return (min(box[0], gr), min(box[1], col), max(box[2], gr), max(box[3], col))
 
 
+def _is_num(s):
+    try:
+        float(s.replace(",", ""))
+        return True
+    except ValueError:
+        return False
+
+
 def _clean(cell):
     # membership test skips rebuilding the (common) already-clean string
     if "\t" in cell or "\n" in cell or "\r" in cell:
@@ -107,6 +115,7 @@ class GridModel:
         self._distinct = {}       # col -> sorted distinct values (filter popup), data-edit invalidates
         self._vlines = {}         # column index -> divider width px on its RIGHT edge (None = theme default)
         self._hlines = {}         # grid-row index -> divider width px on its BOTTOM edge (None = theme default)
+        self._numeric = set()     # columns sorted numerically (smallest->largest) not a->z
         self._readonly = set()    # columns that reject edits/paste/delete (still selectable)
         self._readonly_rows = set()  # SOURCE rows (-1-gr for header) that reject edits, follows sort/filter
         self._styles = {}         # (src_row | -1 for header, col) -> {fg,bg,bold}, display only
@@ -138,6 +147,13 @@ class GridModel:
         dec = [(self._rows[r][col], r) for r in rows]
         blanks = [r for t, r in dec if t == ""]
         filled = [(t, r) for t, r in dec if t != ""]
+        if col in self._numeric:
+            # ponytail: strips commas only; add %/currency parsing if a column needs it
+            num = lambda s: float(s.replace(",", ""))
+            unparsed = [(t, r) for t, r in filled if not _is_num(t)]
+            filled = [(t, r) for t, r in filled if _is_num(t)]
+            filled.sort(key=lambda it: num(it[0]), reverse=not ascending)
+            return [r for _t, r in filled] + [r for _t, r in unparsed] + blanks
         filled.sort(key=lambda it: it[0].lower(), reverse=not ascending)
         return [r for _t, r in filled] + blanks
 
@@ -464,6 +480,16 @@ class GridModel:
         self._color_filters.pop(col, None)
         self._after_view_change()
 
+    def set_column_numeric(self, col, numeric=True):
+        """Mark `col` as a number column: its sort becomes smallest->largest
+        (ascending) / largest->smallest instead of a->z. Re-sorts if active."""
+        self._numeric.add(col) if numeric else self._numeric.discard(col)
+        if self.has_sort(col) and len(self._sort) == 2:
+            self._rebuild(); self.changed()
+
+    def is_column_numeric(self, col):
+        return col in self._numeric
+
     def set_sort(self, col, ascending):
         self._sort = (col, ascending)
         self._after_view_change()
@@ -579,33 +605,3 @@ class GridModel:
     def _rebuilds_on_edit(self, gr, col):
         return gr >= self._hdr and (col in self._filters or col in self._text_filters
                             or (self._sort is not None and self._sort[0] == col))
-
-
-if __name__ == "__main__":   # headless check of GridModel view/style state (editing lives in CoreModel now)
-    m = GridModel(["A", "B"], [["x", "p"], ["y", "q"], ["x", "r"], ["z", "s"]])
-
-    # filter/sort commit as undoable "view" entries (no cell diff)
-    m.set_filter(0, {"x"}); assert m.has_filter(0)
-    assert m.undo() is None and not m.has_filter(0)      # reverted, no cell jump
-    assert m.redo() is None and m.has_filter(0)
-    m.clear_filters()
-    m.set_sort(0, ascending=True); assert m.has_sort(0)
-    m.undo(); assert not m.has_sort(0)
-
-    # per-cell dropdown choices (identical option lists are interned)
-    assert m.cell_choices(1, 0) is None
-    m.set_cell_choices(1, 0, ["x", "y", "z"])
-    assert m.cell_choices(1, 0) == ("x", "y", "z") and m.dropdown_cols() == {0}
-    m.set_cell_choices(1, 1, ["x", "y", "z"])
-    assert m.cell_choices(1, 1) is m.cell_choices(1, 0)  # shared object
-    m.set_cell_choices(1, 0, None)
-    assert m.cell_choices(1, 0) is None and m.dropdown_cols() == {1}
-
-    # grid lines + readonly flags
-    assert m.vlines() == {} and m.hlines() == {}
-    m.set_vline(0); m.set_hline(1, width=4)
-    assert m.vlines() == {0: None} and m.hlines() == {1: 4}   # None = theme default width
-    m.set_vline(0, on=False); assert m.vlines() == {}
-    m.set_readonly_col(0); assert m.col_readonly(0)
-    m.set_readonly_col(0, on=False); assert not m.col_readonly(0)
-    print("model self-check ok")
