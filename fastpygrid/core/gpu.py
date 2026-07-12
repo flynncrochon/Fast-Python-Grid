@@ -19,6 +19,7 @@ fastpygrid.render.qt (Qt). Use those modules' make_sheet() to launch.
 Build once:  build.bat   (compiles the DLLs and copies the package into dist\fastpygrid)
 """
 import ctypes
+import gc
 import math
 import os
 import struct
@@ -83,6 +84,12 @@ def _load_lib():
     """Load the glsurface render backend (OpenGL 1.1, cross-platform), or None if it
     isn't built / can't load. Exports the C-ABI below. make_sheet() raises a build
     hint on None."""
+    # Vsync OFF by default across the app: the vblank wait was pure idle time (~10 ms/
+    # frame doing nothing) and capped animation fps at the refresh rate. The backend
+    # reads this env once at context creation, so set it before the first gpu_attach.
+    # (Matches the flipped C++ default in glsurface.cpp; this makes it take effect with
+    # an already-built DLL too. Set FASTPYGRID_VSYNC=1 to force vsync back on.)
+    os.environ.setdefault("FASTPYGRID_VSYNC", "0")
     path = _lib_path()
     if not os.path.exists(path):
         return None
@@ -94,7 +101,7 @@ def _load_lib():
     sig = {
         "gpu_probe_pixel": ([C, I, I, I, I, I], ctypes.c_uint32),
         "gpu_attach": ([P, I, I], P),
-        "gpu_render": ([P, C, I, I], None),
+        "gpu_render": ([P, C, I, I, I], None),   # ..., clear_rgb, animating (zoom-glide: scaled glyphs)
         "gpu_resize": ([P, I, I], None),
         "gpu_detach": ([P], None),
     }
@@ -188,7 +195,7 @@ def _screen_scale(win):
 # ~4k packs/frame).
 _PK_R = struct.Struct("<cffffiif").pack
 _PK_T = struct.Struct("<cffffifBH").pack
-_PK_X = struct.Struct("<cfffffifH").pack
+_PK_X = struct.Struct("<cfffffifBH").pack
 _PK_L = struct.Struct("<cffffif").pack
 _PK_P = struct.Struct("<ciH").pack
 _PK_FF = struct.Struct("<ff").pack
@@ -204,12 +211,19 @@ class GpuCanvas:
         self.fpx = float(fpx)          # cell-text pixel size, glyph() carries its own
         self.s = scale
         self.buf = bytearray()
+        self._w1 = max(1, round(scale))   # a 1px stroke in device px (precomputed for rect_fill)
 
     def rect(self, x, y, w, h, fill=None, outline=None, width=1):
         # round the stroke width to whole px so outlines/rings/dividers land at a
         # consistent thickness on a hi-DPI display
         self.buf += _PK_R(b"R", x, y, w, h,
                           _col(fill), _col(outline), max(1, round(width * self.s)))
+
+    def rect_fill(self, x, y, w, h, fill):
+        # Fill-only rect: the hot path (every cell background). Skips the outline colour
+        # parse (always -1) and the stroke-width round (constant) that `rect` redoes per
+        # call -- ~2900 cells/frame, so those two ops dominate the throughput ceiling.
+        self.buf += _PK_R(b"R", x, y, w, h, _col(fill), -1, self._w1)
 
     def _text(self, x, y, w, h, s, color, size, bold, center):
         u = s.encode("utf-16-le")
@@ -219,11 +233,12 @@ class GpuCanvas:
     def text(self, x, y, w, h, s, color, bold=False, center=False):
         self._text(x, y, w, h, s, color, self.fpx, bold, center)
 
-    def text_scrolled(self, x, y, w, h, origin_x, s, color):
+    def text_scrolled(self, x, y, w, h, origin_x, s, color, bold=False):
         """Left-aligned text at an explicit origin_x, clipped to (x,y,w,h). Used by
         the custom text field for horizontal scroll (origin_x = x - xscroll)."""
         u = s.encode("utf-16-le")
-        self.buf += _PK_X(b"X", x, y, w, h, origin_x, _col(color), self.fpx, len(u) // 2) + u
+        self.buf += _PK_X(b"X", x, y, w, h, origin_x, _col(color), self.fpx,
+                          1 if bold else 0, len(u) // 2) + u
 
     def line(self, x1, y1, x2, y2, color, width):
         self.buf += _PK_L(b"L", x1, y1, x2, y2, _col(color), max(1, round(width * self.s)))
@@ -262,8 +277,9 @@ class TextField:
     with a `measure` callable the host provides (toolkit-neutral)."""
 
     def __init__(self, measure, text="", clipboard=None):
-        self.measure = measure                   # callable: text -> px width (toolkit-neutral)
+        self.measure = measure                   # callable: (text, bold) -> px width (toolkit-neutral)
         self.clip = clipboard                    # (get, set) callables, or None
+        self.bold = False                        # match the edited cell's weight (caret/scroll widths)
         self.focused = True
         self.set_text(text)
 
@@ -273,7 +289,7 @@ class TextField:
         self.xscroll = 0
 
     def _w(self, i):                             # px width of text[:i]
-        return self.measure(self.text[:i]) if i else 0
+        return self.measure(self.text[:i], self.bold) if i else 0
 
     def _index_at(self, px):                     # caret index nearest text-space pixel px
         best, bestd = 0, 1e18
@@ -372,7 +388,7 @@ class TextField:
             b += 1
         self.anchor, self.caret = a, b
 
-    def draw(self, cv, x, y, w, h, bg, fg, accent, border=True):
+    def draw(self, cv, x, y, w, h, bg, fg, accent, border=True, bold=False):
         pad = cv.fpx * 5 / 13                     # match the cell-text left pad (glsurface.cpp 'T' op)
         avail = max(1, w - 2 * pad)
         cx = self._w(self.caret)                 # keep the caret in view
@@ -389,7 +405,7 @@ class TextField:
             if sx1 > sx0:
                 cv.rect(sx0, y + 2, sx1 - sx0, h - 4, fill=T.EDIT_SEL)
         if self.text:
-            cv.text_scrolled(x + pad, y, avail, h, x + pad - self.xscroll, self.text, fg)
+            cv.text_scrolled(x + pad, y, avail, h, x + pad - self.xscroll, self.text, fg, bold)
         if self.focused:                         # caret
             cxp = x + pad + cx - self.xscroll
             cv.line(cxp, y + 3, cxp, y + h - 3, fg, 1)
@@ -425,7 +441,7 @@ class GpuEngine:
                              row_h=max(14, round(22 * s)), hdr_rows=model.header_rows,
                              uncap_rows=uncap_rows, uncap_cols=uncap_cols, filters=filters)
         self.ctl = GridController(self, base_row_h=22 * s, base_gutter=56 * s, base_w=widths)
-        self._measure = lambda t: self.host.measure(t, False)   # for TextField
+        self._measure = lambda t, b=False: self.host.measure(t, b)   # for TextField
         self._surf = None
         self._editor = None          # open custom in-cell editor state, or None
         self._dbl = (0.0, 0, 0)      # (time, x, y) of the last editor word-select, for triple detect
@@ -435,12 +451,13 @@ class GpuEngine:
         self._sbw = max(12, round(14 * s))            # scrollbar thickness
         self._vsb = {"hover": False, "drag": False, "grab": 0, "thumb": None}
         self._hsb = {"hover": False, "drag": False, "grab": 0, "thumb": None}
+        self._ptr = None             # last pointer (x, y): re-check hover when a thumb slides under it
         self._arrow = False          # pointer is over a ▼ dropdown button (hand cursor)
         self._next = None
         self._paint_pending = False
         self._in_drag = False        # true while a mouse drag gesture is in flight
         self._autoscroll_after = None   # edge-autoscroll timer handle (selection drag)
-        self._autoscroll_acc = [0.0, 0.0]   # fractional (row, px) carried between autoscroll ticks
+        self._autoscroll_acc = [0.0, 0.0]   # fractional px (vertical, horizontal) carried between autoscroll ticks
         self._autoscroll_t = 0.0        # perf_counter of the last autoscroll tick (for real-dt velocity)
         self._drag_xy = None            # last grid-drag pointer pos (for the timer)
         # smooth (inertial) wheel scrolling: wheel adds to a float pixel TARGET and an
@@ -454,10 +471,14 @@ class GpuEngine:
         # pointer (Excel-style), stopping once the thumb reaches it. See _start_sbpage.
         self._sbpage_after = None       # repeat timer handle, or None when idle
         self._sbpage = None             # (axis, track_pos) currently being paged toward
+        self._sbpage_pos = None         # float scroll pos for the page glide (sub-pixel, like the wheel)
         # smooth zoom: a Ctrl+wheel notch multiplies a float target, an animation eases
         # the live zoom toward it a fraction per frame (mirrors the scroll glide above).
         self._zoom_after = None         # zoom animation timer handle, or None when idle
         self._zoom_to = None            # target zoom factor
+        self._zoom_t = 0.0              # perf_counter of the last zoom-ease tick (real-dt)
+        self._zoomfps = os.environ.get("FASTPYGRID_ZOOMFPS") == "1"   # print real glide fps
+        self._zoom_frames = []          # render timestamps for the current glide (fps probe)
         model.changed = lambda: self._coalesce(self.redraw)
 
     # --- surface lifecycle (lazy: device is created on the first Configure, AFTER
@@ -481,7 +502,12 @@ class GpuEngine:
         # upload completes, and on_drag asks for a repaint per event. Coalesce to one
         # render per idle so the selection keeps up with the cursor instead of a
         # backlog of synchronous renders queueing. (Tk/Qt hosts coalesce natively.)
-        if self._in_drag:
+        # Same rationale for the zoom glide: the ease timer ticks ~165 Hz (_ZOOM_MS)
+        # and each tick asks for a paint, faster than a full paint+GPU upload drains on
+        # a heavy sheet. Coalesce to one render per idle so ticks can't backlog. The
+        # zoom level advances on the timer independent of paint, so a dropped frame just
+        # renders the latest level -- motion stays correct, it only sheds unseen uploads.
+        if self._in_drag or self._zoom_to is not None:
             self._coalesce(self._paint_now); return
         self._paint_now()
 
@@ -582,8 +608,18 @@ class GpuEngine:
             if self._surf is None:
                 return
         cv = GpuCanvas(self._fpx, self._scale)
+        anim = 1 if self._zoom_to is not None else 0          # zoom glide: renderer scales cached glyphs
+        if self._zoomfps and self._zoom_to is not None:       # FASTPYGRID_ZOOMFPS=1: split build vs upload
+            t0 = time.perf_counter()
+            ok = self.paint_to(cv)
+            t1 = time.perf_counter()
+            if ok:
+                self._lib.gpu_render(self._surf, bytes(cv.buf), len(cv.buf), _col(T.BG), anim)
+                t2 = time.perf_counter()
+                self._zoom_frames.append((t2, (t1 - t0) * 1000, (t2 - t1) * 1000))
+            return
         if self.paint_to(cv):
-            self._lib.gpu_render(self._surf, bytes(cv.buf), len(cv.buf), _col(T.BG))
+            self._lib.gpu_render(self._surf, bytes(cv.buf), len(cv.buf), _col(T.BG), anim)
 
     # --- GridController host surface (delegates toolkit bits to self.host) ---
     def after_scroll_change(self):   self._coalesce(self.redraw)
@@ -722,7 +758,7 @@ class GpuEngine:
     def _open_filter(self, col):
         # Measure at base font size (÷ current zoom), so the search caret matches the
         # zoom-independent text the popup draws. host.measure uses the zoomed font.
-        base_measure = lambda t: round(self.host.measure(t, False) * self._base_fpx / max(1, self._fpx))
+        base_measure = lambda t, b=False: round(self.host.measure(t, b) * self._base_fpx / max(1, self._fpx))
         tf = TextField(base_measure, "", clipboard=(self.host.clip_get, self.host.clip_set))
         self._filter = {"ctl": FilterController(self.model, col), "col": col, "tf": tf,
                         "top": 0, "loaded": False, "layout": None,
@@ -754,10 +790,10 @@ class GpuEngine:
         rows = ctl.rows(f["tf"].text) if f["loaded"] else []
         items = (["\0all"] + list(rows)) if f["loaded"] else []
         capped_hint = f["loaded"] and ctl.capped and not f["tf"].text.strip()
+        if capped_hint:
+            items = items + ["\0capped"]  # trailing "too many" caption, drawn as the last list row
         avail = g.h - y - 2 * pad
         fixed = 7 * rh + 3 * pad          # sortA, sortZ, sortcolor, clearsort, clear, filtercolor, search
-        if capped_hint:
-            fixed += rh                   # room for the "too many values" caption
         nvis = max(1, min(len(items) or 1, (avail - fixed - rh - 2 * pad) // rh, 12))
         listh = nvis * rh
         H = fixed + listh + 2 * pad + rh                      # + OK/Cancel row
@@ -791,11 +827,6 @@ class GpuEngine:
         f["tf"].draw(cv, x + pad, cy + 1, W - 2 * pad, rh - 2, _PANEL_SUB, _PANEL_FG, T.ACCENT)
         lay["field"] = (x + pad, cy + 1, W - 2 * pad, rh - 2)
         cy += rh + pad
-        if capped_hint:                    # distinct scan hit DISTINCT_CAP: warn + point to search
-            cv.text(x + pad, cy, W - 2 * pad, rh,
-                    "  Too many values (%d+) — type to search" % self.model.DISTINCT_CAP,
-                    "#8a8578")
-            cy += rh
         # checklist
         n = len(items)
         f["top"] = max(0, min(f["top"], max(0, n - nvis)))
@@ -809,6 +840,11 @@ class GpuEngine:
             if ii >= n:
                 break
             v = items[ii]
+            if v == "\0capped":                  # trailing caption row: no checkbox, not clickable
+                ry = cy + i * rh
+                cv.rect(x + pad, ry, lw, rh - 1, fill=_PANEL_BG)
+                cv.text(x + pad, ry, lw, rh, "  Too many, type to search", "#8a8578")
+                continue
             if v == "\0all":
                 label, checked = "(Select all)", ctl.all_on(rows)
             else:
@@ -949,16 +985,17 @@ class GpuEngine:
             if self._in(thumb, x, y):                        # grab the thumb -> drag
                 f["sbdrag"] = True
                 f["sbgrab"] = y - thumb[1]
-            elif thumb:                                      # page toward the click
-                f["top"] += nvis if y > thumb[1] else -nvis
-                self.redraw()
+            elif thumb:                                      # hold -> glide toward the click (Excel-style)
+                self._start_fpage(y)
             return
         if lx <= x <= lx + lw and ly <= y < ly + nvis * rh:  # checklist row
             ii = f["top"] + int((y - ly) // rh)
             items = lo["items"]
             if 0 <= ii < len(items):
                 rows = f["ctl"].rows(f["tf"].text)
-                if items[ii] == "\0all":
+                if items[ii] == "\0capped":
+                    pass                             # caption row, ignore clicks
+                elif items[ii] == "\0all":
                     f["ctl"].toggle_all(rows)
                 else:
                     f["ctl"].toggle(items[ii])
@@ -1056,10 +1093,15 @@ class GpuEngine:
             self._open_dropdown(r, c, choices)
             return
         bg, fg = edit_colors(r, self.geom.hdr_rows)      # blend with the cell it edits
+        st = self.model.cell_style(r, c)                 # keep the cell's own fg/bold while editing
+        bold = bool(st and st.get("bold"))
+        if st and st.get("fg"):
+            fg = st["fg"]
         text = initial if initial is not None else self.model.cell(r, c)
         tf = TextField(self._measure, text, clipboard=(self.host.clip_get, self.host.clip_set))
+        tf.bold = bold
         # caret at end (set_text default): open just begins editing, no select-all
-        self._editor = {"tf": tf, "cell": (r, c), "bg": bg, "fg": fg}
+        self._editor = {"tf": tf, "cell": (r, c), "bg": bg, "fg": fg, "bold": bold}
         self.host.focus()
         self.redraw()
 
@@ -1070,7 +1112,7 @@ class GpuEngine:
         if not g.cell_visible(r, c) or g.col_x(c) < g.gutter_w:
             return                                       # scrolled out of view
         ed["tf"].draw(cv, g.col_x(c), g.row_y(r), g.col_width(c) + 1, g.row_h_at(r) + 1,
-                      ed["bg"], ed["fg"], T.ACCENT)
+                      ed["bg"], ed["fg"], T.ACCENT, bold=ed["bold"])
 
     def _editor_key(self, keysym, char, shift, ctrl):
         k = keysym
@@ -1374,6 +1416,7 @@ class GpuEngine:
         self.ctl.on_release()
 
     def motion(self, x, y):
+        self._ptr = (x, y)
         if self._dropdown:                     # reset: the trigger ▼ left a hand cursor,
             self._set_cursor(""); self._dropdown_hover(x, y); return   # the popup itself is default
         if self._filter:
@@ -1395,6 +1438,8 @@ class GpuEngine:
         if self._filter:
             if self._filter.get("sbdrag"):
                 self._filter_sbdrag(y)
+            elif self._sbpage and self._sbpage[0] == "fpage":   # drag along track re-aims the glide
+                self._sbpage = ("fpage", None, y)
             return
         if self._sb_drag(x, y):
             return
@@ -1470,19 +1515,20 @@ class GpuEngine:
         now = time.perf_counter()
         dt = min(self._AS_DT_CAP, now - self._autoscroll_t)   # real elapsed -> speed is timer-independent
         self._autoscroll_t = now
-        ar, apx = self._autoscroll_acc
-        ar += vr * dt; apx += vpx * dt
-        dr, dpx = int(ar), int(apx)                     # whole steps this tick; keep the remainder
-        self._autoscroll_acc = [ar - dr, apx - dpx]
         g = self.geom
-        before = (g.top_row, g.scroll_x)
-        if dr:
-            g.top_row = max(g.hdr_rows, g.top_row + dr)
+        vpy = vr * g.row_h                              # rows/sec -> px/sec so vertical glides like horizontal
+        apy, apx = self._autoscroll_acc
+        apy += vpy * dt; apx += vpx * dt
+        dpy, dpx = int(apy), int(apx)                   # whole PX steps this tick; keep the remainder
+        self._autoscroll_acc = [apy - dpy, apx - dpx]
+        before = (g.scroll_y, g.scroll_x)
+        if dpy:
+            g.scroll_y = max(0, g.scroll_y + dpy)       # sub-row pixel scroll, not whole-row lurch
         if dpx:
             g.scroll_x = max(0, g.scroll_x + dpx)
         g.clamp(self.model.nrows())
-        applied = (g.top_row, g.scroll_x) != before
-        if (dr or dpx) and not applied:                 # tried to move but clamped at the data edge: stop
+        applied = (g.scroll_y, g.scroll_x) != before
+        if (dpy or dpx) and not applied:                # tried to move but clamped at the data edge: stop
             return
         if applied:
             self.ctl.on_drag(x, y, follow=False)         # extend the selection into the revealed cells
@@ -1509,8 +1555,15 @@ class GpuEngine:
     def toggle_fullscreen(self): self.host.fullscreen_toggle()
 
     # --- smooth zoom (Ctrl+wheel) -----------------------------------------
-    _ZOOM_EASE = 0.75        # fraction of the remaining gap consumed each frame (high = snappy)
-    _ZOOM_MS = 6             # animation timer period (~165 Hz) for a tight, fast glide
+    # TIME-based ease-out, not a per-frame fraction: SwapBuffers is vsync-blocked, so
+    # the timer really fires at the refresh rate (~60 Hz), not _ZOOM_MS's 165 Hz. A
+    # per-frame fraction would then take ~25 refreshes (~420 ms) to settle on a 60 Hz
+    # panel and feel sluggish. Decaying by REAL elapsed dt makes the glide a constant
+    # ~130 ms wall-clock at any refresh -- smooth AND responsive. (Mirrors the
+    # perf_counter real-dt the autoscroll path uses.)
+    _ZOOM_TAU = 0.045        # ease time constant (s): ~95% of the gap closed in ~3*TAU
+    _ZOOM_MS = 1             # animation timer period: tight so the render cadence is vsync-bound,
+                             # not gated by the timer waiting between frames (ease is time-based)
     _ZOOM_SNAP = 0.004       # within this of target -> land exactly and stop
 
     def zoom(self, factor):
@@ -1519,19 +1572,39 @@ class GpuEngine:
         base = self._zoom_to if self._zoom_to is not None else self.ctl._zoom
         self._zoom_to = max(0.4, min(4.0, base * factor))
         if self._zoom_after is None:
+            # Each glide frame allocates short-lived objects (display-list tuples, the
+            # canvas buffer); a gen-0 collection landing mid-glide is a ~10 ms pause that
+            # drops a vblank and shows as a stutter. Freeze GC for the ~130 ms glide --
+            # the deferred garbage is collected once, at settle. (No-op if already off.)
+            gc.disable()
+            self._zoom_t = time.perf_counter()          # glide clock start (real-dt ease)
+            self._zoom_frames = []                       # fps probe: fresh glide
             self._zoom_after = self.host.after(self._ZOOM_MS, self._zoom_anim_tick)
 
     def _zoom_anim_tick(self):
         self._zoom_after = None
         if self._zoom_to is None:
             return
+        now = time.perf_counter()
+        dt, self._zoom_t = now - self._zoom_t, now
         cur = self.ctl._zoom
         gap = self._zoom_to - cur
         if abs(gap) <= self._ZOOM_SNAP:
             self.ctl.zoom_to(self._zoom_to)
             self._zoom_to = None
+            gc.enable(); gc.collect()          # glide done: resume GC, sweep the deferred garbage now
+            if self._zoomfps and len(self._zoom_frames) > 1:
+                ts = [f[0] for f in self._zoom_frames]
+                span = ts[-1] - ts[0]
+                n = len(self._zoom_frames)
+                build = sum(f[1] for f in self._zoom_frames) / n
+                upload = sum(f[2] for f in self._zoom_frames) / n
+                print("zoom glide: %d frames in %.0f ms = %.0f fps  |  avg build %.2f ms  "
+                      "gpu_render+vsync %.2f ms" %
+                      (n, span * 1000, (n - 1) / span if span else 0, build, upload))
             return
-        self.ctl.zoom_to(cur + gap * self._ZOOM_EASE)
+        frac = 1.0 - math.exp(-dt / self._ZOOM_TAU)      # real-dt exponential decay (frame-rate independent)
+        self.ctl.zoom_to(cur + gap * frac)
         self._zoom_after = self.host.after(self._ZOOM_MS, self._zoom_anim_tick)
 
     def key(self, keysym, char, shift, ctrl):
@@ -1689,6 +1762,10 @@ class GpuEngine:
         self._hsb["left"], self._hsb["right"] = (0, g.h, sbw, sbw), (g.w - sbw, g.h, sbw, sbw)
         self._sb_arrow(cv, self._hsb["left"], "left"); self._sb_arrow(cv, self._hsb["right"], "right")
         cv.rect(g.w, g.h, sbw, sbw, fill=_SB_TRACK)                   # corner
+        # A thumb may have slid under a stationary cursor (scrolling elsewhere moves it).
+        # Re-test hover against the new thumb rects; _sb_hover redraws only if a flag flips.
+        if self._ptr and not (self._vsb["drag"] or self._hsb["drag"]):
+            self._sb_hover(*self._ptr)
 
     def _sb_press(self, x, y):
         """Route a scrollbar press: end-arrow step, thumb drag, or track paging."""
@@ -1719,8 +1796,9 @@ class GpuEngine:
     # Held scrollbar actions share one repeat timer: "page" eases toward the pointer
     # and stops there (Excel track-click); "step" nudges a fixed amount per tick while
     # an end arrow is held. The page ease never overshoots, so it lands without bounce.
-    _SBPAGE_MS = 16                                                  # page-ease ~60Hz
-    _SBPAGE_MAX_FRAC = 0.10                                          # per-tick cap: fraction of a viewport
+    # "page" reuses the wheel glide's constants (_SCROLL_MS/_MAX_FRAC/_SNAP) and float
+    # accumulator so track-paging is as smooth as the wheel, not a choppy integer crawl.
+    _SBPAGE_MS = 16                                                  # filter-list page-ease cadence
     _ARROW_MS = 40                                                   # arrow-repeat cadence
     _ARROW_PX = 48                                                   # horizontal arrow step (px)
 
@@ -1738,6 +1816,7 @@ class GpuEngine:
 
     def _start_sbpage(self, axis, pos):
         self._sbpage = ("page", axis, pos)
+        self._sbpage_pos = float(self.geom.scroll_y if axis == "v" else self.geom.scroll_x)
         if self._sbpage_after is None:
             self._sbpage_tick()
 
@@ -1751,28 +1830,62 @@ class GpuEngine:
             self.host.after_cancel(self._sbpage_after)   # no-op on stale ids
             self._sbpage_after = None
         self._sbpage = None
+        self._sbpage_pos = None
+
+    def _start_fpage(self, y):
+        """Same hold-and-glide as the grid track, but easing the filter list's row top."""
+        self._sbpage = ("fpage", None, y)
+        if self._sbpage_after is None:
+            self._sbpage_tick()
+
+    def _fpage_tick(self):
+        if not (self._filter and self._filter.get("layout")):
+            self._sbpage = None; return
+        f, lo = self._filter, self._filter["layout"]
+        lx, ly, lw, rh, nvis, sbw = lo["list"]
+        n = len(lo["items"])
+        th = lo["sbthumb"][3] if lo.get("sbthumb") else rh
+        target = max(0, min(_sb_offset(self._sbpage[2], th / 2, ly, nvis * rh, th, n, nvis),
+                            max(0, n - nvis)))
+        gap = target - f["top"]
+        if gap == 0:
+            self._sbpage = None; return
+        step = max(-nvis, min(nvis, int(gap * self._SCROLL_EASE))) or (1 if gap > 0 else -1)
+        f["top"] = max(0, min(f["top"] + step, max(0, n - nvis)))
+        self.redraw()
+        self._sbpage_after = self.host.after(self._SBPAGE_MS, self._sbpage_tick)
 
     def _sbpage_tick(self):
         self._sbpage_after = None
         if not self._sbpage:
             return
+        if self._sbpage[0] == "fpage":
+            self._fpage_tick(); return
         g, (kind, axis, val) = self.geom, self._sbpage
         view = g.full_rows() * g.row_h if axis == "v" else (g.w - g.freeze_x())
         cur = g.scroll_y if axis == "v" else g.scroll_x
-        if kind == "page":                               # ease toward the held pointer, stop there
-            gap = self._sbpage_target(axis, val) - cur
-            if abs(gap) <= 1:
-                self._sbpage = None; return
-            cap = int(self._SBPAGE_MAX_FRAC * view)      # cap top speed so far clicks don't lurch
-            step = max(-cap, min(cap, int(gap * self._SCROLL_EASE))) or (1 if gap > 0 else -1)
+        if kind == "page":                               # float glide toward the held pointer (== wheel)
+            if self._sbpage_pos is None or abs(self._sbpage_pos - cur) > 1:
+                self._sbpage_pos = float(cur)            # (re)seed if the view moved out from under us
+            gap = self._sbpage_target(axis, val) - self._sbpage_pos
+            if abs(gap) <= self._SCROLL_SNAP:            # land exactly on the pointer and stop
+                newv = self._sbpage_target(axis, val)
+                self._sbpage = self._sbpage_pos = None
+            else:
+                cap = self._SCROLL_MAX_FRAC * view       # cap top speed so far clicks don't lurch
+                self._sbpage_pos += max(-cap, min(cap, gap * self._SCROLL_EASE))
+                newv = max(0, int(round(self._sbpage_pos)))
         else:                                            # end arrow: fixed step, repeat while held
-            step = val * (g.row_h if axis == "v" else self._ARROW_PX)
+            newv = max(0, cur + val * (g.row_h if axis == "v" else self._ARROW_PX))
         if axis == "v":
-            g.scroll_y = max(0, cur + step)
+            g.scroll_y = newv
         else:
-            g.scroll_x = max(0, cur + step)
-        g.clamp(self.model.nrows()); self._coalesce(self._paint_now)   # one paint per idle, no backlog
-        self._sbpage_after = self.host.after(self._SBPAGE_MS if kind == "page" else self._ARROW_MS,
+            g.scroll_x = newv
+        g.clamp(self.model.nrows())
+        self.redraw()                                # paint this tick directly, like the wheel glide
+        if self._sbpage is None:                     # page glide landed -> no more ticks
+            return
+        self._sbpage_after = self.host.after(self._SCROLL_MS if kind == "page" else self._ARROW_MS,
                                              self._sbpage_tick)
 
     def _sb_drag(self, x, y):
@@ -1816,6 +1929,8 @@ class GpuEngine:
             fn()
 
     def close(self):
+        if self._zoom_to is not None:      # closed mid-glide: don't leave GC frozen off
+            gc.enable()
         if self._surf is not None:
             self._lib.gpu_detach(self._surf)
             self._surf = None

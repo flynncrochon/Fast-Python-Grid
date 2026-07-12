@@ -31,9 +31,9 @@ def _bbox(cells, box):
 
 def _blit_cells(cells, cv):
     # hoist the per-cell attribute/global lookups out of the ~2000-iteration loop
-    _rect, _text, _BOLD, _CENTER = cv.rect, cv.text, T.FLAG_BOLD, T.FLAG_CENTER
+    _rect, _text, _BOLD, _CENTER = cv.rect_fill, cv.text, T.FLAG_BOLD, T.FLAG_CENTER
     for (x, y, w, h, text, bg, fg, flags) in cells:
-        _rect(x, y, w - 1, h - 1, fill=bg)
+        _rect(x, y, w - 1, h - 1, bg)                  # fill-only: cells never carry an outline
         if text:
             _text(x, y, w, h, text, fg, bool(flags & _BOLD), bool(flags & _CENTER))
 

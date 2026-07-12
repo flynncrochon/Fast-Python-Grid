@@ -203,11 +203,15 @@ class GridController:
         btn = self.geom.row_h - 8 + 8                # filter button + gap (bottom header row)
         arrow = self.geom.row_h                      # dropdown ▼ zone (data cells)
         drop = self.model.cell_choices
+        # Reserve the cell's left+right text pad, which the GPU renderer sizes as
+        # fpx*9/13 and which grows with zoom. A fixed margin here fit at 1x but was too
+        # small when zoomed in (pad > margin), so autofit produced columns that trimmed.
+        pad = round(self.host._fpx * 9 / 13) + 3     # padL+padR at the current zoom + slack
         for cc in cols:
             w = max(self.host.measure(self.model.cell(r, cc), r < H)
                     + (btn if r == H - 1 else arrow if r >= H and drop(r, cc) is not None else 0)
                     for r in rows)
-            self.resize_to(cc, w + 12)                       # 5px text inset + margin
+            self.resize_to(cc, w + pad)
         self.host.after_geometry_change()
         self.host.redraw()
 
@@ -228,11 +232,20 @@ class GridController:
         if z == self._zoom:
             return
         self._zoom = z
+        g = self.geom
+        # scroll_x/scroll_y are PIXEL offsets, so after the row/col sizes change that
+        # same offset lands on a different cell -- zooming in would drift the view up/left.
+        # Capture the old sizes, then rescale the offsets by how much they grew, so the
+        # cell under the top-left corner stays put (anchor the zoom there).
+        old_row_h, old_w = g.row_h, g.content_w()
         self.host.set_zoom_fonts(z)
-        self.geom.set_metrics(max(10, round(self._base_row_h * z)),
-                              max(24, round(self._base_gutter * z)),
-                              [max(20, round(w * z)) for w in self._base_w])
-        self.geom.clamp(self.model.nrows())
+        g.set_metrics(max(10, round(self._base_row_h * z)),
+                      max(24, round(self._base_gutter * z)),
+                      [max(20, round(w * z)) for w in self._base_w])
+        g.scroll_y = round(g.scroll_y * g.row_h / old_row_h) if old_row_h else g.scroll_y
+        new_w = g.content_w()
+        g.scroll_x = round(g.scroll_x * new_w / old_w) if old_w else g.scroll_x
+        g.clamp(self.model.nrows())
         # One repaint per frame: the eased zoom calls this ~90x/sec, and the extra
         # after_geometry_change() present (redundant with redraw() in this engine)
         # doubled the GPU work per frame and read as lag. redraw() alone is enough.

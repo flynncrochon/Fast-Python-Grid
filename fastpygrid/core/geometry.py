@@ -244,7 +244,7 @@ class Geometry:
         by = self.header_h - self.field_h + (self.field_h - sz) // 2
         return bx, by, sz
 
-    def col_edge_hit(self, x, y, ncols, grab=4):
+    def col_edge_hit(self, x, y, ncols, grab=7):
         """Column whose RIGHT border sits within `grab` px of screen-x `x`, when
         the pointer is in the header band, else None. Drives column drag-resize
         and dbl-click autofit, resizes the column LEFT of the grabbed border."""

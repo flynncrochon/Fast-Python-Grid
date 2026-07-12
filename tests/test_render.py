@@ -7,6 +7,8 @@ class _Rec:
     def __init__(self): self.rects = []
     def rect(self, x, y, w, h, fill=None, outline=None, width=1):
         self.rects.append((x, y, w, h, fill))
+    def rect_fill(self, x, y, w, h, fill):             # cell-fill hot path (no outline)
+        self.rects.append((x, y, w, h, fill))
     def text(self, *a, **k): pass
     def barrier(self): pass
 
