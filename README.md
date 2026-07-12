@@ -3,6 +3,8 @@
 </p>
 
 [![Run tests](https://github.com/flynncrochon/Fast-Python-Grid/actions/workflows/tests.yml/badge.svg)](https://github.com/flynncrochon/Fast-Python-Grid/actions/workflows/tests.yml)
+[![PyPI](https://img.shields.io/pypi/v/fastpygrid)](https://pypi.org/project/fastpygrid/)
+[![License: MIT](https://img.shields.io/pypi/l/fastpygrid)](LICENSE)
 
 An OpenGL spreadsheet grid for tens of thousands of rows. Only visible cells
 are built, so scroll, select, filter and find stay instant. A GUI-free core
