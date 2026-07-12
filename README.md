@@ -2,6 +2,8 @@
   <img src="docs/logo.svg" alt="Fast Python Grid" width="420">
 </p>
 
+[![Run tests](https://github.com/flynncrochon/Fast-Python-Grid/actions/workflows/tests.yml/badge.svg)](https://github.com/flynncrochon/Fast-Python-Grid/actions/workflows/tests.yml)
+
 An OpenGL spreadsheet grid for tens of thousands of rows. Only visible cells
 are built, so scroll, select, filter and find stay instant. A GUI-free core
 holds the logic, under a thin Tk or Qt host.

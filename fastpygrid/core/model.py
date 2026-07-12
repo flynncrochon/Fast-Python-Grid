@@ -114,7 +114,7 @@ class GridModel:
                                    # scan -- lets the typing path refine instead of rescan
         self._distinct = {}       # col -> sorted distinct values (filter popup), data-edit invalidates
         self._vlines = {}         # column index -> divider width px on its RIGHT edge (None = theme default)
-        self._hlines = {}         # grid-row index -> divider width px on its BOTTOM edge (None = theme default)
+        self._hlines = {}         # SOURCE row (-1-gr for header) -> divider width px on its BOTTOM edge; follows sort/filter
         self._numeric = set()     # columns sorted numerically (smallest->largest) not a->z
         self._readonly = set()    # columns that reject edits/paste/delete (still selectable)
         self._readonly_rows = set()  # SOURCE rows (-1-gr for header) that reject edits, follows sort/filter
@@ -355,9 +355,10 @@ class GridModel:
             return None
         return self._choices.get(self._style_key(gr, col)) or self._col_choices.get(col)
 
-    # --- thick section dividers (display only, black). Positional -- keyed by
-    # column / GRID-row index, not by source row, so they mark a fixed place in
-    # the sheet (like the frozen divider) and do NOT follow data through sort/filter.
+    # --- thick section dividers (display only, black). vlines are positional
+    # (keyed by column -- a fixed place in the sheet, like the frozen divider).
+    # hlines are keyed by SOURCE row so a row's divider follows it through
+    # sort/filter (like styles / read-only rows), staying above+below THAT row.
     def set_vline(self, col, on=True, width=None):
         """Thick black divider on the RIGHT edge of column `col` (on=False clears).
         `width` = stroke px (DPI-scaled by the renderer); None uses the theme default."""
@@ -368,19 +369,32 @@ class GridModel:
         self.changed()
 
     def set_hline(self, gr, on=True, width=None):
-        """Thick black divider on the BOTTOM edge of grid row `gr` (on=False clears).
+        """Thick black divider on the BOTTOM edge of row `gr` (on=False clears).
+        Keyed by source row, so it follows the row through sort/filter.
         `width` = stroke px (DPI-scaled by the renderer); None uses the theme default."""
+        src = self._grid_to_src(gr)
         if on:
-            self._hlines[gr] = width
+            self._hlines[src] = width
         else:
-            self._hlines.pop(gr, None)
+            self._hlines.pop(src, None)
         self.changed()
 
     def vlines(self):
         return self._vlines
 
     def hlines(self):
+        """Source-keyed {src: width}. Truthiness guard for paint; per-row lookup
+        goes through hline_width (which maps the current grid row to its source)."""
         return self._hlines
+
+    _NO_HLINE = object()
+
+    def hline_width(self, gr):
+        """Divider width on grid row `gr`'s bottom edge, or _NO_HLINE if none.
+        width None = theme default, so None can't double as 'absent'."""
+        if not self._hlines:
+            return self._NO_HLINE
+        return self._hlines.get(self._grid_to_src(gr), self._NO_HLINE)
 
     # --- read-only columns (reject edits/paste/delete, still selectable/copyable) --
     def set_readonly_col(self, col, on=True):

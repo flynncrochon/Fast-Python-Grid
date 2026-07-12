@@ -89,9 +89,10 @@ LONG_OPTS = ["%04d — %s" % (i, _LONG[i % len(_LONG)]) for i in range(1000)]
 def lines_demo(model):
     """Thick black section dividers: a vertical rule right of the Chg% column
     (splits the identity/price block from the quarterly financials) and a couple
-    of horizontal rules to band the data. Positional -- they mark a fixed place."""
+    of horizontal rules to band the data. The vline is positional; the hlines
+    latch onto their data row and follow it through sort/filter."""
     model.set_vline(HEADERS.index("Chg%"))
-    model.set_hline(10)                        # under grid row 10 (a data row)
+    model.set_hline(10)                        # under whatever row is at grid 10 now
     model.set_hline(25)
 
 
