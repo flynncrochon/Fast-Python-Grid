@@ -1,10 +1,15 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="Fast Python Grid" width="420">
+  <img src="docs/logo.svg" alt="Fast Python Grid" width="600">
 </p>
 
-[![Run tests](https://github.com/flynncrochon/Fast-Python-Grid/actions/workflows/tests.yml/badge.svg)](https://github.com/flynncrochon/Fast-Python-Grid/actions/workflows/tests.yml)
-[![PyPI](https://img.shields.io/pypi/v/fastpygrid)](https://pypi.org/project/fastpygrid/)
-[![License: MIT](https://img.shields.io/pypi/l/fastpygrid)](LICENSE)
+<p align="center">
+  <a href="https://github.com/flynncrochon/Fast-Python-Grid/actions/workflows/tests.yml"><img src="https://github.com/flynncrochon/Fast-Python-Grid/actions/workflows/tests.yml/badge.svg" alt="Run tests"></a>
+  <a href="https://pypi.org/project/fastpygrid/"><img src="https://img.shields.io/pypi/v/fastpygrid" alt="PyPI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/pypi/l/fastpygrid" alt="License: MIT"></a>
+  <a href="https://pypi.org/project/fastpygrid/"><img src="https://img.shields.io/badge/python-3.8%2B-blue" alt="Python 3.8+"></a>
+</p>
+
+---
 
 An OpenGL spreadsheet grid for tens of thousands of rows. A GUI-free core
 holds the logic, under a thin Tk or Qt host.
@@ -54,7 +59,7 @@ win.mainloop()                                          # aliases app.exec()
 ### From a pandas DataFrame
 
 `dataframe_to_grid(df)` turns a DataFrame into `(headers, rows)` you splat straight
-into `make_sheet` / `make_model`. pandas is **not** a dependency -- it duck-types the
+into `make_sheet` / `make_model`. pandas is **not** a dependency; it duck-types the
 DataFrame, so it only needs pandas if you actually pass one. A MultiIndex columns
 frame becomes stacked headers (one row per level); `NaN`/`None` render blank.
 

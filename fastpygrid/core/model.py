@@ -1,11 +1,9 @@
-"""Plain-Python grid model: a matrix of strings with filter / sort / find,
-in-cell editing, paste, and undo/redo. Zero Qt.
+"""Plain-Python grid model: matrix of strings with filter/sort/find, in-cell
+editing, paste, undo/redo. Zero Qt.
 
-Grid rows 0..H-1 are header rows (``headers`` may be one list, or a list of
-lists for a multi-row header whose bottom row holds the field names): real,
-selectable, pinned rows, so a click/copy/find treats them as just more rows.
-Data index ``di = gr - H`` maps through ``_src_data`` to a source row in
-``self._rows``.
+Grid rows 0..H-1 are header rows (real, selectable, pinned; ``headers`` may be
+one list or a list of lists for a multi-row header, bottom row = field names).
+Data index ``di = gr - H`` maps via ``_src_data`` to a source row in ``self._rows``.
 """
 from html.parser import HTMLParser
 
@@ -18,7 +16,7 @@ _CLEAN = str.maketrans("\t\n\r", "   ")
 
 class _HtmlTable(HTMLParser):
     """First <table> in the clipboard HTML -> list of row lists of cell text.
-    ponytail: ignores colspan/rowspan (Jira tables rarely merge), add if needed."""
+    Ignores colspan/rowspan (Jira tables rarely merge), add if needed."""
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.rows, self._row, self._cell, self._done = [], None, None, False
@@ -57,8 +55,8 @@ def _parse_html_table(text):
 
 
 def _grow(box, gr, col):
-    """Extend an (r1,c1,r2,c2) rect to include a cell -- the bounding box of the
-    cells an edit touched, so undo/redo reselect exactly them."""
+    """Extend an (r1,c1,r2,c2) rect to include a cell: bounding box of the cells an
+    edit touched, so undo/redo reselect exactly them."""
     if box is None:
         return (gr, col, gr, col)
     return (min(box[0], gr), min(box[1], col), max(box[2], gr), max(box[3], col))
@@ -73,7 +71,7 @@ def _is_num(s):
 
 
 def _clean(cell):
-    # membership test skips rebuilding the (common) already-clean string
+    # skip rebuilding the common already-clean string
     if "\t" in cell or "\n" in cell or "\r" in cell:
         return cell.translate(_CLEAN)
     return cell
@@ -82,7 +80,7 @@ def _clean(cell):
 class GridModel:
     def __init__(self, headers, rows, editable=True):
         self.editable = editable
-        self.changed = lambda: None     # the view assigns its redraw here
+        self.changed = lambda: None     # view assigns its redraw here
         self.set_data(headers, rows)
 
     # --- data load ----------------------------------------------------
@@ -99,19 +97,19 @@ class GridModel:
         self._init_view_state()
 
     def _init_view_state(self):
-        """Fresh filter/sort/undo/find/presentation state -- everything except the
-        cell storage itself, so set_data() here and in CoreModel share it."""
+        """Fresh filter/sort/undo/find/presentation state: everything except cell
+        storage, so set_data() here and in CoreModel share it."""
         self._filters = {}        # col -> set(allowed display strings)
         self._text_filters = {}   # col -> (op, operand)
-        self._color_filters = {}  # col -> ('fg'|'bg', color hex or None) -- keep only that color
+        self._color_filters = {}  # col -> ('fg'|'bg', color hex or None): keep only that color
         self._sort = None         # (col, ascending) text, or (col, asc, 'fg'|'bg', color) by color
         self._undo, self._redo = [], []
         self._find_needle = ""
         self._find_case = False
         self._find_scope = None   # list of (r1,c1,r2,c2) or None
         self._find_active = None  # (row, col)
-        self._find_cache = None    # (needle, case, scope, matches) of the last complete
-                                   # scan -- lets the typing path refine instead of rescan
+        self._find_cache = None    # (needle, case, scope, matches) of last full scan --
+                                   # typing path refines instead of rescanning
         self._distinct = {}       # col -> sorted distinct values (filter popup), data-edit invalidates
         self._vlines = {}         # column index -> divider width px on its RIGHT edge (None = theme default)
         self._hlines = {}         # SOURCE row (-1-gr for header) -> divider width px on its BOTTOM edge; follows sort/filter
@@ -122,8 +120,8 @@ class GridModel:
         self._choices = {}        # (src_row | -1, col) -> (choice, ...), a dropdown cell
         self._col_choices = {}    # col -> (choice, ...), whole-column dropdown default (O(1))
         self._choice_cols = set() # columns holding any dropdown (paint() per-column skip)
-        self._choice_intern = {}  # option-list -> itself: a whole column of identical
-                                  # dropdowns shares ONE tuple, not a copy per cell
+        self._choice_intern = {}  # option-list -> itself: identical dropdowns in a
+                                  # column share ONE tuple, not a copy per cell
         self._rebuild()
         self._committed_filt = self._filt_snapshot()   # last view state pushed to undo
 
@@ -148,7 +146,7 @@ class GridModel:
         blanks = [r for t, r in dec if t == ""]
         filled = [(t, r) for t, r in dec if t != ""]
         if col in self._numeric:
-            # ponytail: strips commas only; add %/currency parsing if a column needs it
+            # strips commas only; add %/currency parsing if a column needs it
             num = lambda s: float(s.replace(",", ""))
             unparsed = [(t, r) for t, r in filled if not _is_num(t)]
             filled = [(t, r) for t, r in filled if _is_num(t)]
@@ -163,20 +161,19 @@ class GridModel:
         return st.get(which) if st else None
 
     def _sort_by_color(self, rows, col, ascending, which, color):
-        """Bring the rows whose `col` cell has `which` color == `color` to the top
-        (ascending) or bottom, keeping each group's original order -- a
-        single-color sort. color=None targets uncolored ('No Fill'/'Automatic')."""
+        """Bring rows whose `col` cell has `which` color == `color` to the top
+        (ascending) or bottom, keeping each group's order. color=None = uncolored."""
         match = [r for r in rows if self._cell_color(r, col, which) == color]
         rest = [r for r in rows if self._cell_color(r, col, which) != color]
         return match + rest if ascending else rest + match
 
     def _rebuild(self):
-        self._find_cache = None            # view changed -> cached grid-row coords are stale
+        self._find_cache = None            # view changed -> cached grid-row coords stale
         self._used = None                  # ...and the used-range (scrollbar) snapshot
         if self._is_plain():
-            self._view = []      # unread while plain (_src_data/_data_count skip it), don't build 1M ids
+            self._view = []      # unread while plain; don't build 1M ids
             return
-        rows = range(len(self._rows))      # narrowed by the first filter, not materialised up front
+        rows = range(len(self._rows))      # narrowed by first filter, not materialised up front
         for col, allowed in self._filters.items():
             rows = [r for r in rows if self._rows[r][col] in allowed]
         for col, spec in self._text_filters.items():
@@ -205,13 +202,16 @@ class GridModel:
         return self._hdr + self._data_count()
 
     def _real_rows(self):
-        """Grid rows EXCLUDING the blank pad -- headers + real data. Find scans
-        these, select-all covers them."""
+        """Grid rows EXCLUDING the blank pad: headers + real data. Find scans these;
+        select-all covers them."""
         return self._hdr + (len(self._rows) if self._is_plain() else len(self._view))
 
     def _src_data(self, di):
-        """Data index (0-based) -> source row in self._rows."""
-        return di if self._is_plain() else self._view[di]
+        """Data index -> source row in self._rows. A phantom overscroll row past a
+        filtered view has no source -> -1 (callers guard 0<=r<len(rows))."""
+        if self._is_plain():
+            return di
+        return self._view[di] if di < len(self._view) else -1
 
     def cell(self, gr, col):
         if not (0 <= col < self._w):
@@ -223,24 +223,22 @@ class GridModel:
 
     def block_text(self, data_rows, cols):
         """Text for a viewport block as {(data_idx, col): str}, data_idx = grid_row -
-        hdr_rows. paint() prefetches the whole body in one shot so a core-backed model
-        can batch it into a single FFI (see CoreModel.block_text). Base = per-cell."""
+        hdr_rows. paint() prefetches the whole body so a core model can batch it into
+        one FFI (CoreModel.block_text). Base = per-cell."""
         H, cell = self._hdr, self.cell
         return {(di, c): cell(di + H, c) for di in data_rows for c in cols}
 
     def data_extent(self):
-        """(last_real_row, last_col) for Ctrl+A -- header + real data, never the
-        blank pad."""
+        """(last_real_row, last_col) for Ctrl+A: header + real data, never the pad."""
         return max(0, self._real_rows() - 1), max(0, self._w - 1)
 
     def used_extent(self):
         """(nrows-equiv, ncols) trimmed to real content, for the scrollbar thumb.
-        Editing a cell out in the uncapped overscroll materialises every blank row/
-        column up to it. Clearing it leaves those blanks, so nrows()/ncols would
-        keep the thumb tiny forever. This reports the last row/column that actually
-        holds text (+ PAD nav rows) so the thumb snaps back. Cached, invalidated on
+        Overscroll edits materialise blank rows/cols; clearing them leaves the blanks,
+        so nrows()/ncols would keep the thumb tiny forever. Reports the last row/col
+        holding text (+ PAD nav rows) so the thumb snaps back. Cached, invalidated on
         every edit / view change.
-        ponytail: backward scan, O(trailing-blank cells) -- on the C++ model that's
+        Backward scan, O(trailing-blank cells); on the C++ model that's
         a ctypes call per cell. Add a gc_used_extent DLL export if a giant
         overscroll delete ever hitches."""
         if self._used is not None:
@@ -268,23 +266,22 @@ class GridModel:
         self._used = (used_nrows, uc)
         return self._used
 
-    # --- per-cell style (display only, keyed by SOURCE row so it follows the
-    # data through sort/filter). Not undoable. bg is the cell's base fill (wash
-    # tints over it, find-highlight overrides). fg/bold always apply. ----------
+    # --- per-cell style (display only, keyed by SOURCE row so it follows sort/filter;
+    # not undoable). bg = base fill (wash tints over it, find overrides); fg/bold always.
     def _style_key(self, gr, col):
         if not (0 <= col < self._w):
             return None
         if gr < self._hdr:
-            return (-1 - gr, col)                # header row gr -> -1, -2, …
+            return (-1 - gr, col)                # header row -> -1, -2, …
         di = gr - self._hdr
         if not (0 <= di < self._data_count()):
             return None
         r = self._src_data(di)
-        return (r, col) if r < len(self._rows) else None    # not the blank pad
+        return (r, col) if r < len(self._rows) else None    # not the pad
 
     def set_cell_style(self, gr, col, fg=None, bg=None, bold=None):
-        """Style one cell. Pass any of fg/bg (#rrggbb) or bold (bool). None
-        leaves that attribute unchanged. A later value overrides an earlier one."""
+        """Style one cell. fg/bg (#rrggbb) or bold (bool); None leaves that attr
+        unchanged."""
         key = self._style_key(gr, col)
         if key is None:
             return
@@ -295,23 +292,23 @@ class GridModel:
         self.changed()
 
     def cell_style(self, gr, col):
-        """The style dict for a cell, or None. Hot path (per visible cell), so
-        the common no-styles case is a single dict-empty check."""
+        """Style dict for a cell, or None. Hot path (per visible cell): no-styles
+        case is one dict-empty check."""
         if not self._styles:
             return None
         return self._styles.get(self._style_key(gr, col))
 
-    # --- per-cell dropdown choices (display only, keyed like styles so they
-    # follow the row through sort/filter). Editing such a cell offers a select
-    # menu instead of free text -- see the renderers' begin_edit. -------------
+    # --- per-cell dropdown choices (display only, keyed like styles so they follow
+    # sort/filter). Editing offers a select menu instead of free text (renderers'
+    # begin_edit).
     def set_cell_choices(self, gr, col, choices):
-        """Make a cell a dropdown: editing it offers `choices` (list of strings)
-        instead of free text. choices=None clears it back to a plain text cell."""
+        """Make a cell a dropdown offering `choices` (strings). None clears it to
+        plain text."""
         key = self._style_key(gr, col)
         if key is None:
             return
-        # _choice_cols tracks columns with any dropdown so paint() skips the per-cell
-        # lookup elsewhere. O(1) on set. clear rescans this column only (clears are rare).
+        # _choice_cols tracks columns with any dropdown (paint() skips per-cell lookup).
+        # O(1) on set; clear rescans this column only (clears are rare).
         if choices is None:
             if self._choices.pop(key, None) is not None \
                     and not any(cc == col for _r, cc in self._choices) \
@@ -319,16 +316,15 @@ class GridModel:
                 self._choice_cols.discard(col)
         else:
             t = tuple(map(str, choices))
-            t = self._choice_intern.setdefault(t, t)   # distinct-but-equal lists share one tuple
+            t = self._choice_intern.setdefault(t, t)   # equal lists share one tuple
             self._choices[key] = t
             self._choice_cols.add(col)
         self.changed()
 
     def set_col_choices(self, col, choices):
-        """Make an ENTIRE column a dropdown offering `choices`. O(1) regardless of
-        row count -- prefer this to a set_cell_choices() per row. A per-cell
-        set_cell_choices() on the same column still overrides this default.
-        choices=None clears the column default."""
+        """Make an ENTIRE column a dropdown offering `choices`. O(1) regardless of row
+        count; prefer over per-row set_cell_choices(), which still overrides this.
+        None clears the column default."""
         if not (0 <= col < self._w):
             return
         if choices is None:
@@ -343,25 +339,23 @@ class GridModel:
         self.changed()
 
     def dropdown_cols(self):
-        """The set of columns that contain at least one dropdown cell. paint()
-        checks this once per column instead of cell_choices() per cell."""
+        """Columns containing at least one dropdown cell. paint() checks this once
+        per column instead of cell_choices() per cell."""
         return self._choice_cols
 
     def cell_choices(self, gr, col):
-        """The choice list for a dropdown cell, or None for a plain cell. Hot
-        path (per edit), so the common no-dropdowns case is one dict-empty check.
-        A per-cell choice wins, otherwise the column default (set_col_choices)."""
+        """Choice list for a dropdown cell, or None. Hot path: no-dropdowns case is
+        one dict-empty check. Per-cell choice wins over the column default."""
         if not self._choices and not self._col_choices:
             return None
         return self._choices.get(self._style_key(gr, col)) or self._col_choices.get(col)
 
-    # --- thick section dividers (display only, black). vlines are positional
-    # (keyed by column -- a fixed place in the sheet, like the frozen divider).
-    # hlines are keyed by SOURCE row so a row's divider follows it through
-    # sort/filter (like styles / read-only rows), staying above+below THAT row.
+    # --- thick section dividers (display only, black). vlines keyed by column (fixed
+    # place, like the frozen divider); hlines keyed by SOURCE row so they follow
+    # sort/filter.
     def set_vline(self, col, on=True, width=None):
         """Thick black divider on the RIGHT edge of column `col` (on=False clears).
-        `width` = stroke px (DPI-scaled by the renderer); None uses the theme default."""
+        `width` = stroke px (DPI-scaled); None = theme default."""
         if on:
             self._vlines[col] = width
         else:
@@ -369,9 +363,8 @@ class GridModel:
         self.changed()
 
     def set_hline(self, gr, on=True, width=None):
-        """Thick black divider on the BOTTOM edge of row `gr` (on=False clears).
-        Keyed by source row, so it follows the row through sort/filter.
-        `width` = stroke px (DPI-scaled by the renderer); None uses the theme default."""
+        """Thick black divider on the BOTTOM edge of row `gr` (on=False clears). Keyed
+        by source row, so it follows sort/filter. `width` = stroke px; None = theme default."""
         src = self._grid_to_src(gr)
         if on:
             self._hlines[src] = width
@@ -383,32 +376,31 @@ class GridModel:
         return self._vlines
 
     def hlines(self):
-        """Source-keyed {src: width}. Truthiness guard for paint; per-row lookup
-        goes through hline_width (which maps the current grid row to its source)."""
+        """Source-keyed {src: width}. Truthiness guard for paint; per-row lookup goes
+        through hline_width."""
         return self._hlines
 
     _NO_HLINE = object()
 
     def hline_width(self, gr):
-        """Divider width on grid row `gr`'s bottom edge, or _NO_HLINE if none.
-        width None = theme default, so None can't double as 'absent'."""
+        """Divider width on grid row `gr`'s bottom edge, or _NO_HLINE if none (width
+        None already means theme default)."""
         if not self._hlines:
             return self._NO_HLINE
         return self._hlines.get(self._grid_to_src(gr), self._NO_HLINE)
 
     # --- read-only columns (reject edits/paste/delete, still selectable/copyable) --
     def set_readonly_col(self, col, on=True):
-        """Block edits, paste and delete in `col` (on=False re-enables it)."""
+        """Block edits/paste/delete in `col` (on=False re-enables)."""
         self._readonly.add(col) if on else self._readonly.discard(col)
 
     def col_readonly(self, col):
         return col in self._readonly
 
-    # --- read-only rows (freeze a row: reject edits/paste/delete, still
-    # selectable/copyable). Keyed by SOURCE row so the lock follows the data
-    # through sort/filter, like styles. Pass any grid row (header rows too).
+    # --- read-only rows (reject edits/paste/delete, still selectable/copyable). Keyed
+    # by SOURCE row so the lock follows sort/filter. Accepts any grid row.
     def set_readonly_row(self, gr, on=True):
-        """Freeze row `gr`: block edits, paste and delete in it (on=False unlocks)."""
+        """Freeze row `gr`: block edits/paste/delete (on=False unlocks)."""
         src = self._grid_to_src(gr)
         self._readonly_rows.add(src) if on else self._readonly_rows.discard(src)
 
@@ -425,25 +417,25 @@ class GridModel:
     DISTINCT_CAP = 1000
 
     def distinct_capped(self, col, cap=DISTINCT_CAP):
-        """(sorted values, capped?) for the filter checklist. Early-exits past
-        `cap` distinct values (a checklist is useless there -- user narrows via
-        Contains…/Equals…). A column that fits under the cap is scanned and cached."""
+        """(sorted values, capped?) for the filter checklist. Early-exits past `cap`
+        distinct values (checklist useless there; user narrows via Contains…/Equals…).
+        A column under the cap is scanned and cached."""
         vals = self._distinct.get(col)
         if vals is not None:
             return vals[:cap], len(vals) > cap
         seen = set()
-        add = seen.add                              # bind once, called per row on a full scan
+        add = seen.add                              # bind once, called per row
         for row in self._rows:
             add(row[col])
-            if len(seen) > cap:                     # high-card bails out here after ~cap rows
+            if len(seen) > cap:                     # high-card bails after ~cap rows
                 return sorted(seen)[:cap], True     # partial -> don't cache
         vals = self._distinct[col] = sorted(seen)   # complete -> cache
         return vals, False
 
     def distinct_matching(self, col, query, cap=DISTINCT_CAP):
-        """Up to `cap` sorted distinct values in `col` that contain `query`
-        (case-insensitive). Lets the filter popup's search box reach members
-        beyond the capped preview on a high-cardinality column."""
+        """Up to `cap` sorted distinct values in `col` containing `query`
+        (case-insensitive), lets the search box reach members beyond the capped
+        preview on a high-cardinality column."""
         q = query.lower()
         seen = set()
         for row in self._rows:
@@ -455,8 +447,8 @@ class GridModel:
         return sorted(seen)[:cap]
 
     def distinct_colors(self, col, which):
-        """Sorted distinct 'fg'/'bg' hex colors used by styled cells in `col`.
-        Uncolored cells aren't listed. Scans styled cells only (usually few)."""
+        """Sorted distinct 'fg'/'bg' hex colors of styled cells in `col` (uncolored
+        not listed). Scans styled cells only."""
         seen = {st[which] for (r, c), st in self._styles.items()
                 if c == col and r >= 0 and which in st}
         return sorted(seen)
@@ -482,8 +474,8 @@ class GridModel:
         self._after_view_change()
 
     def set_color_filter(self, col, which, color):
-        """Keep only rows whose `col` cell has `which` ('fg'/'bg') == `color`
-        (a hex string, or None for uncolored). which=None clears the color filter."""
+        """Keep only rows whose `col` cell has `which` ('fg'/'bg') == `color` (hex, or
+        None for uncolored). which=None clears the color filter."""
         (self._color_filters.pop(col, None) if which is None
          else self._color_filters.__setitem__(col, (which, color)))
         self._after_view_change()
@@ -495,8 +487,8 @@ class GridModel:
         self._after_view_change()
 
     def set_column_numeric(self, col, numeric=True):
-        """Mark `col` as a number column: its sort becomes smallest->largest
-        (ascending) / largest->smallest instead of a->z. Re-sorts if active."""
+        """Mark `col` numeric: sort becomes smallest->largest instead of a->z.
+        Re-sorts if active."""
         self._numeric.add(col) if numeric else self._numeric.discard(col)
         if self.has_sort(col) and len(self._sort) == 2:
             self._rebuild(); self.changed()
@@ -509,8 +501,8 @@ class GridModel:
         self._after_view_change()
 
     def set_color_sort(self, col, which, color, ascending=True):
-        """Bring the `which` ('fg'/'bg') == `color` rows of `col` to the top
-        (color=None = uncolored). A sort-by-color single pick."""
+        """Bring `col` rows with `which` ('fg'/'bg') == `color` to the top
+        (color=None = uncolored)."""
         self._sort = (col, ascending, which, color)
         self._after_view_change()
 
@@ -526,7 +518,7 @@ class GridModel:
         self._find_active = None
         self._rebuild()
         self.changed()
-        post = self._filt_snapshot()          # filter/sort is undoable like an edit
+        post = self._filt_snapshot()          # filter/sort undoable like an edit
         if self._committed_filt != post:
             self._undo.append(("view", self._committed_filt, post))
             del self._undo[:-200]
@@ -549,7 +541,7 @@ class GridModel:
         self.changed()
 
     def find_state(self, gr, col):
-        """0 none, 1 match-highlight, 2 active match -- tested per VISIBLE cell."""
+        """0 none, 1 match-highlight, 2 active match; per VISIBLE cell."""
         if self._find_active == (gr, col):
             return 2
         n = self._find_needle
@@ -562,11 +554,10 @@ class GridModel:
         return 1 if v and n in (v if self._find_case else v.lower()) else 0
 
     # --- editing + undo/redo (GRID rows) ------------------------------
-    # Undo is a DIFF log, not a snapshot: each entry is
-    # (changes, filt, target, pre_len), changes = [(src_row, col, old, new)]
-    # (src_row -1 = header). Edit + undo/redo cost O(cells changed), not a full copy.
+    # Undo is a DIFF log: each entry is (changes, filt, target, pre_len), changes =
+    # [(src_row, col, old, new)] (src_row -1 = header). Cost O(cells changed).
     def _filt_snapshot(self):
-        # An edit's entry also restores the filters/sort active when it ran.
+        # an entry also restores the filters/sort active when it ran
         return (dict(self._filters), dict(self._text_filters), self._sort,
                 dict(self._color_filters))
 
@@ -575,9 +566,8 @@ class GridModel:
 
 
     def _clamp_target(self, rng):
-        # rng is a view rect (r1,c1,r2,c2) -- the cells an undo/redo touched, so the
-        # selection lands back on them. A sorted/filtered-column edit can
-        # reorder rows so it lands near-but-not-exact. Source-remap if it matters.
+        # rng = view rect the undo/redo touched, so selection lands back on it. A
+        # sorted/filtered-column edit can reorder rows -> lands near-but-not-exact.
         if rng is None:
             return None
         R, C = self.nrows() - 1, self._w - 1
@@ -596,7 +586,7 @@ class GridModel:
 
 
     def _apply_entry(self, entry, use_new):
-        if entry[0] == "view":                       # filter/sort change: no cell to select
+        if entry[0] == "view":                       # filter/sort change: no cell
             self._find_active = None
             self._install_filt(entry[2] if use_new else entry[1])
             self.changed()

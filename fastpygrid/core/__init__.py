@@ -1,5 +1,4 @@
-"""GUI-free core: model + geometry + selection + display-list paint.
-Import nothing from any toolkit here."""
+"""GUI-free core: model + geometry + selection + display-list paint. No toolkit imports."""
 from . import selection, theme
 from .model import GridModel
 from .geometry import Geometry

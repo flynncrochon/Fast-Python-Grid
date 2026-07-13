@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Build the two Linux shared objects (gridcore.so, glsurface.so) straight into
 # fastpygrid/core/, where coremodel.py / gpu.py load them via ctypes. The Linux
-# counterpart to build.bat -- run it inside WSL or on any Linux box:
+# counterpart to build.bat, run it inside WSL or on any Linux box:
 #
 #   wsl bash build.sh          # from a Windows shell
 #   ./build.sh                 # from inside WSL / Linux
 #
-# Needs: g++ and the dev headers -- on Ubuntu/WSL:
+# Needs: g++ and the dev headers; on Ubuntu/WSL:
 #   sudo apt install build-essential libgl1-mesa-dev libx11-dev libfreetype-dev
 #
 # This is a LOCAL test build (plain linux_x86_64). The PyPI manylinux wheel comes

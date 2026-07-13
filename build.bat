@@ -1,5 +1,5 @@
 @echo off
-REM Build the distributable wheel + sdist into dist\ via `python -m build` -- the
+REM Build the distributable wheel + sdist into dist\ via `python -m build`, the
 REM same path CI and PyPI use. scikit-build-core compiles the DLLs through
 REM CMakeLists.txt. Run after changing any .py or .cpp, then demos\setup.bat to
 REM install the fresh wheel into the demo venv.

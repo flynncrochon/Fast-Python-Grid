@@ -1,32 +1,23 @@
-"""The one shared selection + frozen-pane state machine for every grid mode.
+"""Shared selection + frozen-pane state machine, pure functions so read-only and
+editable grids select, extend and cross frozen panes IDENTICALLY.
 
-Every selection and freeze decision routes through these pure functions, so both
-read-only and editable grids select, extend and cross frozen panes IDENTICALLY,
-one copy of "what does a click/drag/arrow do".
+Coordinates are the HOST grid's own (bounds passed in, results in the same
+coords). Grids differ only in header placement and frozen columns:
 
-Coordinates are the HOST grid's own, the bounds are passed in, and the returned
-selection tuples come back in those same coordinates. Grids differ only in where
-their header sits and whether they freeze columns:
-
-  * `top_hrow`   : topmost header pseudo-row (and the row a column selection
-                   starts from). A grid with a single header row at the very top
-                   passes ``0``, a grid whose header bands sit ABOVE data row 0 as
-                   negative pseudo-rows passes ``-header_rows`` (e.g. ``-2`` for a
-                   grouped two-band header).
-  * `last_row`   : last selectable (visible) data row.
+  * `top_hrow`   : topmost header pseudo-row (and where a column selection starts).
+                   Single top header -> ``0``; header bands above data row 0 ->
+                   ``-header_rows`` (e.g. ``-2`` for a two-band header).
+  * `last_row`   : last visible data row.
   * `last_col`   : last column.
-  * `frozen_cols`: number of pinned leading columns. ``0`` makes the freeze
-                   logic a no-op (a grid with no frozen columns).
+  * `frozen_cols`: pinned leading columns; ``0`` makes freeze logic a no-op.
 
-A press is classified by the host's hit-test into a ``region``:
-  ``"all"``    the letter-band / gutter corner : the whole sheet
-  ``"gutter"`` the row-number gutter           : a whole row
-  ``"band"``   the column-letter band          : a whole column (headers incl.)
-  ``"cell"``   any data OR header-title cell    : a single cell
+Press regions (from the host hit-test): ``"all"`` corner=whole sheet,
+``"gutter"`` row-number=whole row, ``"band"`` letter-band=whole column,
+``"cell"`` data/header-title=single cell.
 
-Modifier semantics (spreadsheet-style, identical across grids): a plain click/Shift
-collapses the disjoint Ctrl-click ranges to one, Ctrl banks the active range and
-starts a fresh one, Ctrl+Shift extends the active range while keeping the others.
+Modifiers (spreadsheet-style): plain/Shift collapses disjoint Ctrl ranges to one;
+Ctrl banks the active range and starts fresh; Ctrl+Shift extends while keeping the
+others.
 """
 
 
@@ -49,12 +40,11 @@ def resolve_click(region, row, col, *, top_hrow, last_row, last_col,
         elif region == "band":
             new = (top_hrow, min(ac, col), last_row, max(ac, col))
             active = (top_hrow, col)
-        else:  # cell (a header-title cell is a normal cell)
+        else:  # cell (header-title cell = normal cell)
             erow = max(row, top_hrow)
             new = (min(ar, erow), min(ac, col), max(ar, erow), max(ac, col))
             active = (erow, col)
-        # Plain Shift collapses to one extended range, only Ctrl+Shift keeps the
-        # disjoint Ctrl-clicked ranges.
+        # Plain Shift collapses to one range; only Ctrl+Shift keeps disjoint ranges.
         kept = list(extra) if ctrl else []
         return new, kept, active, anchor
     # No Shift: Ctrl banks the active range and starts a fresh single one.
@@ -72,12 +62,11 @@ def resolve_click(region, row, col, *, top_hrow, last_row, last_col,
 
 
 def resolve_drag(drag_region, row, col, *, top_hrow, last_row, last_col, anchor):
-    """Resolve a drag-extend into ``(sel, active)``. The anchor is unchanged.
+    """Resolve a drag-extend into ``(sel, active)``; anchor unchanged.
 
-    ``drag_region`` is the region the drag STARTED in: ``"gutter"`` keeps
-    extending whole rows, ``"band"`` whole columns, anything else a cell
-    rectangle. The caller is responsible for any frozen-pane column crossing
-    (see :func:`edge_reveal_col`) before passing ``col`` in for a cell drag.
+    ``drag_region`` is where the drag STARTED: ``"gutter"`` extends whole rows,
+    ``"band"`` whole columns, else a cell rectangle. Caller handles frozen-pane
+    crossing (see :func:`edge_reveal_col`) before passing ``col`` for a cell drag.
     """
     ar, ac = anchor
     if drag_region == "gutter":
@@ -93,19 +82,17 @@ def edge_reveal_col(col, *, anchor_col, frozen_cols, scroll_x, ncols,
                     pointer_x, gutter_w, frozen_w, body_w, leaf_x):
     """Frozen-pane crossing for a horizontal cell drag.
 
-    With no frozen columns (``frozen_cols <= 0``) this is a no-op and returns
-    ``col`` unchanged, that's how a grid with no frozen columns shares
-    the same drag path. Otherwise, keyed on the ANCHOR column so a vertical drag
-    that began in a frozen column keeps its column instead of being hijacked:
+    No frozen columns (``frozen_cols <= 0``) -> no-op, returns ``col`` unchanged.
+    Otherwise keyed on the ANCHOR column, so a vertical drag begun in a frozen
+    column keeps its column:
 
-      * Drag STARTED in a scrollable column and the pointer is at/left of the
-        freeze line with columns scrolled off  →  target the scrollable column
-        hidden just under the frozen block (the caller's scroll-into-view then
-        reveals it, one per drag motion). NEVER snap onto a pinned frozen column.
-      * Pointer past the right edge  →  the next column to the right.
-      * Otherwise  →  the pointer's own column.
+      * Started scrollable, pointer at/left of the freeze line with columns
+        scrolled off -> target the scrollable column hidden under the frozen block
+        (caller's scroll-into-view reveals it). NEVER snap onto a frozen column.
+      * Pointer past the right edge -> next column right.
+      * Else -> the pointer's own column.
 
-    ``leaf_x`` is a callable mapping a column index to its current screen x.
+    ``leaf_x`` maps a column index to its current screen x.
     """
     if frozen_cols <= 0:
         return col
@@ -121,10 +108,9 @@ def edge_reveal_col(col, *, anchor_col, frozen_cols, scroll_x, ncols,
 
 
 def edge_scan(start, step, lo, hi, occupied):
-    """Ctrl+arrow target along one axis. ``occupied(i)`` reports whether
-    cell ``i`` holds a value. From a filled run, stop at its last filled cell
-    before a gap. From a gap or block edge, jump to the next filled cell (or the
-    boundary if none)."""
+    """Ctrl+arrow target along one axis. ``occupied(i)`` = cell ``i`` has a value.
+    From a filled run, stop at its last filled cell before a gap; from a gap/edge,
+    jump to the next filled cell (or the boundary)."""
     nxt = start + step
     if nxt < lo or nxt > hi:
         return start
@@ -143,13 +129,10 @@ def resolve_arrow(key, *, active, anchor, top_hrow, last_row, last_col,
                   shift, ctrl, page_rows=1, occupied_row=None, occupied_col=None):
     """Resolve a navigation key into ``(sel, extra, active, anchor)``.
 
-    Header bands are normal selectable cells, so moving up clamps to ``top_hrow``
-    (reaching a header band one row at a time) and the freeze never blocks the
-    cursor. Ctrl moves to an edge: with an ``occupied_*`` callback that edge is an
-    data-block jump (a dense matrix), without one it jumps to the grid
-    boundary (a read-only grid, where empty cells are normal).
-    Shift extends the active range from the anchor, collapsing any disjoint
-    ranges. A plain move resets the selection to the new cell.
+    Header bands are normal cells, so Up clamps to ``top_hrow`` and the freeze never
+    blocks the cursor. Ctrl moves to an edge: with an ``occupied_*`` callback it's a
+    data-block jump, without one a jump to the grid boundary. Shift extends from the
+    anchor (collapsing disjoint ranges); a plain move resets to the new cell.
     """
     r, c = active if active is not None else (top_hrow, 0)
     nr, nc = r, c

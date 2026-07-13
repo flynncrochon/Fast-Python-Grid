@@ -1,4 +1,4 @@
-// gridcore -- C++ data core for GridModel. Owns ALL cell text (header + data
+// gridcore: C++ data core for GridModel. Owns ALL cell text (header + data
 // rows), the bulk text ops (copy/delete/paste/find), a bulk column fetch (so
 // Python's filter/sort/distinct touch one column without per-cell ctypes), and
 // undo/redo of cell edits. Python keeps view/filter/sort orchestration and
@@ -20,7 +20,7 @@
 #include <unordered_map>
 
 // Undo entry as struct-of-arrays: one flat index per changed cell + the old
-// text (moved in from the cell during the op -- no copy on the hot path). `nw`
+// text (moved in from the cell during the op, no copy on the hot path). `nw`
 // is populated for paste/set, left EMPTY for a pure delete (all-new == ""), so
 // a full-grid delete never allocates 2.4M empty strings. undo/redo copy back
 // from the log (the cold path).
@@ -112,8 +112,8 @@ EXPORT void gc_free(void* h) { delete (Core*)h; }
 EXPORT int gc_ndata(void* h) { return ((Core*)h)->ndata(); }
 
 // Grow the COLUMN count (editing a cell past the last column extends
-// the sheet). Re-strides the row-major buffer -- every row gains blank trailing
-// cells -- and remaps the undo/redo flat indices (row*cols+col) to the new stride
+// the sheet). Re-strides the row-major buffer (every row gains blank trailing
+// cells) and remaps the undo/redo flat indices (row*cols+col) to the new stride
 // so history survives the widen. No-op if new_cols <= cols. No undo entry itself.
 EXPORT void gc_grow_cols(void* h, int new_cols) {
     Core* c = (Core*)h;
@@ -152,7 +152,7 @@ EXPORT const char* gc_cell(void* h, int row, int col) {
         return c->at(row, col).c_str();
     return "";
 }
-// low-level set by combined row (no undo) -- used for header load, materialise, replay
+// low-level set by combined row (no undo), used for header load, materialise, replay
 EXPORT int gc_set_raw(void* h, int row, int col, const char* s) {
     Core* c = (Core*)h;
     if (row < 0 || row >= c->nrows() || col < 0 || col >= c->cols) return 0;
@@ -418,7 +418,7 @@ EXPORT int gc_paste(void* h, int r0, int c0, const char* text, int len,
     long long area = (long long)(len / 2 + 1);        // rough upper bound on fields
     if (area > 0 && area < (1 << 26)) reserve(c, (int)area);
     // An empty line (col back at c0, empty field) is zero cells, not one empty
-    // cell -- matches csv, where a blank line parses to [] and writes nothing.
+    // cell; matches csv, where a blank line parses to [] and writes nothing.
     for (const char* p = text; p < end; p++) {
         char ch = *p;
         if (ch == '\t') { put(field, p); col++; field = p + 1; }

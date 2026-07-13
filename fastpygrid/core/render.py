@@ -1,9 +1,8 @@
-"""blit(display_list, canvas) -- the toolkit-neutral draw walk.
+"""blit(display_list, canvas): toolkit-neutral draw walk.
 
-paint.py decides WHAT the frame looks like (a display list of pure data). This
-walks that list and issues primitive draw calls against a ``canvas`` (GpuCanvas).
-Layout, z-order and the funnel/arrow decomposition live here. The canvas is just
-"here's how I draw a rect / text / line / polygon / glyph":
+paint.py decides WHAT the frame looks like (a display list of data); this walks it
+and issues primitive draw calls against a ``canvas`` (GpuCanvas). Z-order and the
+funnel/arrow decomposition live here. Canvas primitives:
 
     canvas.rect(x, y, w, h, fill=None, outline=None, width=1)
     canvas.text(x, y, w, h, s, color, bold=False, center=False)   # clipped to w
@@ -15,7 +14,7 @@ from . import theme as T
 
 
 def _bbox(cells, box):
-    """Union `box` [x0,y0,x1,y1] (or None) with every cell rect, in one pass."""
+    """Union `box` [x0,y0,x1,y1] (or None) with every cell rect."""
     for c in cells:
         cx, cy = c[0], c[1]
         r, b = cx + c[2], cy + c[3]
@@ -30,10 +29,10 @@ def _bbox(cells, box):
 
 
 def _blit_cells(cells, cv):
-    # hoist the per-cell attribute/global lookups out of the ~2000-iteration loop
+    # hoist attr/global lookups out of the ~2000-iteration loop
     _rect, _text, _BOLD, _CENTER = cv.rect_fill, cv.text, T.FLAG_BOLD, T.FLAG_CENTER
     for (x, y, w, h, text, bg, fg, flags) in cells:
-        _rect(x, y, w - 1, h - 1, bg)                  # fill-only: cells never carry an outline
+        _rect(x, y, w - 1, h - 1, bg)                  # fill-only: cells carry no outline
         if text:
             _text(x, y, w, h, text, fg, bool(flags & _BOLD), bool(flags & _CENTER))
 
@@ -60,9 +59,8 @@ def _blit_overlays(overlays, cv):
 
 
 def blit(dl, cv):
-    # Grid lines are the 1px gaps between inset cell fills over a single grid-colour
-    # backing rect -- one fill per cell, no per-cell stroke (~4x faster in Qt,
-    # pixel-identical). Cells tile gaplessly, the backing shows only at each right/bottom edge.
+    # Grid lines = 1px gaps between inset cell fills over one grid-colour backing
+    # rect. One fill per cell, no per-cell stroke (~4x faster in Qt, pixel-identical).
     box = _bbox(dl.chrome, _bbox(dl.frozen, _bbox(dl.cells, None)))
     if box:
         x0, y0, x1, y1 = box
@@ -79,12 +77,11 @@ def blit(dl, cv):
 
 def blit_fast(chrome_cells, mid_cells, body_wire, frozen_wire, body_box,
               drops, frozen_drops, overlays, cv):
-    """Fast-path assembly: the body cells are already encoded as wire bytes
-    (gc_paint_body); splice them in, reproducing blit()'s exact 3-layer order --
-    backing rect (union of every extent); L0 scrollable body bytes + its dropdowns;
-    barrier; L1 frozen body bytes + `mid_cells` (gutter + scrollable header/letter) +
-    frozen dropdowns; barrier; L2 `chrome_cells` (pins); overlays. `body_box` is the
-    union of both bodies' [x0,y0,x1,y1]."""
+    """Fast path: body cells arrive pre-encoded as wire bytes (gc_paint_body); splice
+    them in, reproducing blit()'s 3-layer order: backing rect; L0 body bytes +
+    dropdowns; barrier; L1 frozen body + `mid_cells` (gutter + scrollable header) +
+    frozen dropdowns; barrier; L2 `chrome_cells` (pins); overlays. `body_box` = union
+    of both bodies' [x0,y0,x1,y1]."""
     box = _bbox(chrome_cells, _bbox(mid_cells, list(body_box) if body_box else None))
     if box:
         x0, y0, x1, y1 = box

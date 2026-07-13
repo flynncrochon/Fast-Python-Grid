@@ -1,11 +1,9 @@
 """fastpygrid: a fast grid split into a GUI-free core and thin toolkit hosts.
 
-    core/        model + geometry + selection + paint() + the OpenGL engine (gpu.py)
-    render/      tk.py (tkinter host) · qt.py (PySide6 host)
+    core/    model + geometry + selection + paint() + OpenGL engine (gpu.py)
+    render/  tk.py (tkinter) · qt.py (PySide6); both drive the SAME engine
 
-Both hosts drive the SAME OpenGL engine, so behaviour and looks match.
-
-    from fastpygrid.render.tk import make_sheet   # tkinter
+    from fastpygrid.render.tk import make_sheet
     win = make_sheet(headers, rows, frozen_columns=2)
     win.mainloop()
 """

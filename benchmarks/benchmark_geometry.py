@@ -7,7 +7,7 @@ import os
 import sys
 import time
 
-# needs fastpygrid installed -- run demos/setup.bat, or `pip install .`
+# needs fastpygrid installed: run demos/setup.bat, or `pip install .`
 from fastpygrid.core.geometry import Geometry
 from fastpygrid.core.model import GridModel
 from fastpygrid.core.paint import paint

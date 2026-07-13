@@ -1,6 +1,6 @@
 """Live zoom-fps probe: opens the REAL GL surface, auto-runs a few Ctrl+wheel zoom
 glides, and prints the true rendered fps (past vsync + GPU upload) for each. This is
-the number bench_zoom.py can't get -- it needs a window. Closes itself after ~6 s.
+the number bench_zoom.py can't get; it needs a window. Closes itself after ~6 s.
 
     python benchmarks/bench_zoom_live.py
 """
@@ -22,12 +22,12 @@ COL_W = [90, 200, 130, 90, 80, 110, 90]
 def main():
     lib = _load_lib()
     if lib is None:
-        raise SystemExit("OpenGL surface unavailable -- build it with "
+        raise SystemExit("OpenGL surface unavailable, build it with "
                          "`python -m fastpygrid.core.gpu --build`.")
     _enable_dpi_awareness()
     rows = [[f"R{r}C{c}" for c in range(len(HEADERS))] for r in range(100_000)]
     root = tk.Tk()
-    root.title("zoom fps probe -- auto-zooming, closes itself")
+    root.title("zoom fps probe: auto-zooming, closes itself")
     scale = _screen_scale(root)
     root.geometry("%dx%d" % (round(1000 * scale), round(700 * scale)))
     model = make_model(HEADERS, rows, editable=True)

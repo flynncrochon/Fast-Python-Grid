@@ -60,7 +60,7 @@ def _prepare(headers, rows):
     if eng._surf is None:
         raise RuntimeError("surface never attached")
     # We render every frame by hand, so silence the engine's coalesced after_idle
-    # repaints -- otherwise a stale _flush fires after teardown ("invalid command").
+    # repaints; otherwise a stale _flush fires after teardown ("invalid command").
     eng._coalesce = lambda fn: None
     return win, eng
 
@@ -97,7 +97,7 @@ def _phase_hscroll(eng):
 
 def _phase_select(eng):
     """Press top-left, then drag the far corner outward so the selection grows to
-    fill the viewport -- the worst-case selection-highlight render."""
+    fill the viewport, the worst-case selection-highlight render."""
     _reset(eng)
     g, (w, h) = eng.geom, eng.host.size()
     x0, y0 = g.gutter_w + 8, g.header_h + 8
@@ -116,7 +116,7 @@ def _phase_fast_select(eng):
     """LARGE, QUICK, FAST-MOVING selection: anchor top-left, then fling the drag
     corner across the whole viewport in big jumps every frame (coprime triangle
     waves so it doesn't settle into a cycle). Each frame the selection rectangle
-    is large AND changes a lot -- the stress case the request asked for."""
+    is large AND changes a lot, the stress case the request asked for."""
     _reset(eng)
     g, (w, h) = eng.geom, eng.host.size()
     x0, y0 = g.gutter_w + 8, g.header_h + 8
@@ -152,7 +152,7 @@ def bench(headers, rows):
 
 def main():
     if _load_lib() is None:
-        print("OpenGL backend (glsurface) not built -- run build.bat"); return 1
+        print("OpenGL backend (glsurface) not built, run build.bat"); return 1
     headers, rows = _dataset()
     r = bench(headers, rows)
     print("interactive benchmark  (%dx%d fullscreen, %d cells on screen, %d rows x %d cols)\n"

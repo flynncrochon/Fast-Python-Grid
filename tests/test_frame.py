@@ -1,4 +1,4 @@
-"""Duck-typed check of dataframe_to_grid -- no pandas needed to exercise the logic."""
+"""Duck-typed check of dataframe_to_grid: no pandas needed to exercise the logic."""
 from fastpygrid.frame import dataframe_to_grid
 
 

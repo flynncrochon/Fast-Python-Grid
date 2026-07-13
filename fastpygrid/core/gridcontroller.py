@@ -1,12 +1,10 @@
 """Toolkit-neutral grid controller: owns the selection state machine and turns
-normalized input events into core calls. Shared by the Tk and Qt renderers:
-selection/anchor, click+drag selection (incl. frozen-pane crossing),
-keyboard nav/copy/paste/undo, column drag-resize + dbl-click autofit, and
-Ctrl+wheel zoom.
+normalized input events into core calls. Shared by the Tk and Qt renderers
+(selection, click+drag incl. frozen-pane crossing, keyboard nav/copy/paste/undo,
+column resize + autofit, Ctrl+wheel zoom).
 
-A renderer owns only what differs per toolkit (drawing the display
-list, building widgets (editor, filter popup, find bar), and translating native
-events), then delegates the logic here through this small ``host`` surface:
+The renderer owns only per-toolkit bits (drawing, widgets, native events) and
+delegates the logic here through this ``host`` surface:
 
     host.model, host.geom, host.editable
     host.redraw()                     repaint the viewport
@@ -41,9 +39,8 @@ class GridController:
         self.resize_col = None             # column being drag-resized, else None
         self.corner_hover = False
         self._pending_dropdown = False     # ▼ button pressed, open the list on release
-        # Zoom: metrics are recomputed from these base values * _zoom (never
-        # ratio-chained), so it stays crisp and never drifts. Manual column
-        # resizes write back to _base_w so a later zoom keeps them proportional.
+        # Metrics recomputed from these base * _zoom (never ratio-chained) so it never
+        # drifts. Manual resizes write back to _base_w so zoom keeps them proportional.
         self._zoom = 1.0
         self._base_row_h = base_row_h
         self._base_gutter = base_gutter
@@ -56,9 +53,8 @@ class GridController:
     def bounds(self):
         g, m = self.geom, self.model
         last_row, last_col = m.nrows() - 1, m.ncols - 1
-        # Uncapped: let selection/arrow-nav reach the phantom cells that are on
-        # screen. The bound grows with the view, so it stays "infinite": each
-        # scroll reveals more reachable cells (spreadsheet-style).
+        # Uncapped: let selection/arrow-nav reach on-screen phantom cells. The bound
+        # grows with the view, so each scroll reveals more reachable cells.
         if g.uncap_rows:
             last_row = max(last_row, g.top_row + g.vis_rows())
         if g.uncap_cols:
@@ -89,8 +85,8 @@ class GridController:
             self.sel, self.extra, self.active, self.anchor = S.resolve_click(
                 region, row, col, anchor=self.anchor, sel=self.sel, extra=self.extra,
                 ctrl=False, shift=False, **self.bounds())
-            self._pending_dropdown = True    # open in on_release so this click's release
-            self.scroll_into_view(*self.active)   # doesn't land on the fresh popup and dismiss it
+            self._pending_dropdown = True    # open in on_release so this release doesn't
+            self.scroll_into_view(*self.active)   # land on the fresh popup and dismiss it
             self.host.redraw()
             return
         ec = g.col_edge_hit(x, y, m.ncols)
@@ -117,10 +113,9 @@ class GridController:
             self.host.redraw()
 
     def on_drag(self, x, y, follow=True):
-        """Resolve a drag-extend from a pointer pos. ``follow`` scrolls the view to
-        keep the pressed-to cell visible. The engine passes follow=False while its
-        edge-autoscroll timer owns the scrolling, so the two don't compound (that
-        double-scroll raced the pointer and flew thousands of rows past the edge)."""
+        """Resolve a drag-extend. ``follow`` scrolls to keep the pressed-to cell
+        visible; the engine passes follow=False while its edge-autoscroll timer owns
+        scrolling, else the two compound and fly thousands of rows past the edge."""
         g, m = self.geom, self.model
         if self.resize_col is not None:                     # live column resize
             self.resize_to(self.resize_col, self._resize_w0 + (x - self._resize_x0))
@@ -135,8 +130,8 @@ class GridController:
         if col is None:
             col = g.frozen if x < g.gutter_w else ncols - 1
         # frozen-pane crossing: dragging left past the freeze line targets the
-        # scrollable column hidden under the frozen block (scroll-into-view reveals
-        # it, one per motion) instead of snapping onto a pinned frozen column.
+        # scrollable column hidden under the frozen block (revealed one per motion)
+        # instead of snapping onto a pinned frozen column.
         col = S.edge_reveal_col(col, anchor_col=self.anchor[1], frozen_cols=g.frozen,
                                 scroll_x=g.scroll_x, ncols=ncols, pointer_x=x,
                                 gutter_w=g.gutter_w, frozen_w=g.frozen_w(),
@@ -144,17 +139,17 @@ class GridController:
         self.sel, self.active = S.resolve_drag(
             self.drag_region, row, col, anchor=self.anchor, **self.bounds())
         if follow:
-            self.scroll_into_view(*self.active)             # push the view to the pressed-to cell
+            self.scroll_into_view(*self.active)
         g.clamp(nrows)
         self.host.redraw()
 
     def on_release(self):
         self.drag_region = None
         self.resize_col = None
-        if self._pending_dropdown:          # ▼ button click, open the list now (after the release)
+        if self._pending_dropdown:          # ▼ button click, open the list now
             self._pending_dropdown = False
             self.host.begin_edit()
-        self.host.redraw()      # full repaint so chrome (corner tri) reflects the final selection
+        self.host.redraw()      # full repaint so chrome reflects the final selection
 
     def on_double(self, x, y):
         ec = self.geom.col_edge_hit(x, y, self.model.ncols)
@@ -165,15 +160,14 @@ class GridController:
         if region == "cell" and self.editable:
             self.active = (row, col)
             if self.model.cell_choices(row, col) is not None:
-                self._pending_dropdown = True    # open on the dbl-click's trailing release,
-            else:                                # else the release lands on and dismisses the popup
+                self._pending_dropdown = True    # open on the trailing release, else it
+            else:                                # lands on and dismisses the popup
                 self.host.begin_edit()
 
     def ensure_col(self, c):
-        """Grow the sheet so column `c` exists (editing a phantom column past the
-        last one, uncapped). No-op for a real column. Widens the model AND geometry
-        (at the phantom width the empty columns were shown), so the new columns store
-        text and render/hit/zoom exactly like the originals."""
+        """Grow the sheet so column `c` exists (editing a phantom column, uncapped);
+        no-op for a real column. Widens model AND geometry at the phantom width so new
+        columns render/hit/zoom like the originals."""
         if c < self.model.ncols:
             return
         new_w = c + 1
@@ -185,16 +179,15 @@ class GridController:
 
     # --- column sizing ----------------------------------------------------
     def resize_to(self, c, w):
-        """Set a column width (drag-resize / autofit) and record it as the new
-        zoom base so a later zoom keeps it proportional instead of snapping back."""
+        """Set a column width and record it as the new zoom base so a later zoom keeps
+        it proportional instead of snapping back."""
         self.geom.set_col_w(c, w)
         self._base_w[c] = self.geom.col_w[c] / self._zoom
 
     def autofit(self, c, rows=None):
-        # fit headers + currently-visible rows only by default. Scanning 1M rows for the
-        # widest cell would stall. Visible-fit matches what the user sees. Callers that KNOW
-        # the grid is small (or must fit content below the fold on first load) can pass an
-        # explicit `rows` list (grid-row indices) to fit against those instead.
+        # Default: fit headers + visible rows only (scanning 1M rows would stall, and
+        # visible-fit matches what the user sees). Callers that know the grid is small
+        # can pass explicit `rows` (grid-row indices) instead.
         H = self.geom.hdr_rows
         sel = self._selected_cols()
         cols = sorted(sel) if c in sel and len(sel) > 1 else [c]   # Ctrl+A -> fit all
@@ -203,9 +196,8 @@ class GridController:
         btn = self.geom.row_h - 8 + 8                # filter button + gap (bottom header row)
         arrow = self.geom.row_h                      # dropdown ▼ zone (data cells)
         drop = self.model.cell_choices
-        # Reserve the cell's left+right text pad, which the GPU renderer sizes as
-        # fpx*9/13 and which grows with zoom. A fixed margin here fit at 1x but was too
-        # small when zoomed in (pad > margin), so autofit produced columns that trimmed.
+        # Reserve the cell's L+R text pad; the GPU renderer sizes it fpx*9/13, which
+        # grows with zoom, so a fixed margin trimmed columns when zoomed in.
         pad = round(self.host._fpx * 9 / 13) + 3     # padL+padR at the current zoom + slack
         for cc in cols:
             w = max(self.host.measure(self.model.cell(r, cc), r < H)
@@ -222,21 +214,17 @@ class GridController:
         return cols
 
     # --- zoom (Ctrl + wheel) ---------------------------------------------
-    def zoom_by(self, factor):
-        self.zoom_to(self._zoom * factor)
-
     def zoom_to(self, z):
         """Apply an absolute zoom factor (clamped). The engine eases toward a target
-        by calling this each animation frame; a notch is factor 1.1 via zoom_by."""
+        by calling this each animation frame (a wheel notch multiplies target by 1.1)."""
         z = max(0.4, min(4.0, z))
         if z == self._zoom:
             return
         self._zoom = z
         g = self.geom
-        # scroll_x/scroll_y are PIXEL offsets, so after the row/col sizes change that
-        # same offset lands on a different cell -- zooming in would drift the view up/left.
-        # Capture the old sizes, then rescale the offsets by how much they grew, so the
-        # cell under the top-left corner stays put (anchor the zoom there).
+        # scroll_x/scroll_y are PIXEL offsets, so after sizes change the same offset
+        # lands on a different cell. Rescale by how much the sizes grew so the cell
+        # under the top-left corner stays put (anchor the zoom there).
         old_row_h, old_w = g.row_h, g.content_w()
         self.host.set_zoom_fonts(z)
         g.set_metrics(max(10, round(self._base_row_h * z)),
@@ -246,15 +234,14 @@ class GridController:
         new_w = g.content_w()
         g.scroll_x = round(g.scroll_x * new_w / old_w) if old_w else g.scroll_x
         g.clamp(self.model.nrows())
-        # One repaint per frame: the eased zoom calls this ~90x/sec, and the extra
-        # after_geometry_change() present (redundant with redraw() in this engine)
-        # doubled the GPU work per frame and read as lag. redraw() alone is enough.
+        # One repaint per frame: eased zoom calls this ~90x/sec; an extra
+        # after_geometry_change() here doubled GPU work per frame and read as lag.
         self.host.redraw()
 
     # --- keyboard ---------------------------------------------------------
     def on_key(self, key, shift, ctrl, text):
-        """Handle a normalized key. ``key`` is a lowercase letter or one of the
-        ARROWS / "Return"/"Tab"/"Delete"/"F2". Returns True if consumed."""
+        """Handle a normalized key (lowercase letter or ARROWS/Return/Tab/Delete/F2).
+        Returns True if consumed."""
         m = self.model
         if ctrl:
             if key == "f":
@@ -271,7 +258,7 @@ class GridController:
                 self._jump(m.redo()); return True
             if key == "a":
                 lr, lc = m.data_extent()
-                self.sel, self.extra = (0, 0, lr, lc), []    # header + data (active 0,0 -> paste in place)
+                self.sel, self.extra = (0, 0, lr, lc), []    # header + data (active 0,0 pastes in place)
                 self.active = self.anchor = (0, 0)
                 self.host.redraw(); return True
         if key in ARROWS:
@@ -289,8 +276,8 @@ class GridController:
         return False
 
     def _jump(self, rng):
-        """Reselect the cells an undo/redo touched (None = a view-only change such
-        as a filter/sort undo, leave the selection where it is)."""
+        """Reselect the cells an undo/redo touched (None = view-only change like a
+        filter/sort undo, leave the selection put)."""
         if rng is not None:
             r1, c1, r2, c2 = rng
             self.sel, self.extra = (r1, c1, r2, c2), []
@@ -304,8 +291,8 @@ class GridController:
         self.host.clipboard_set(self.model.selection_text(self.ranges()))
 
     def cut(self):
-        """Copy then clear. model.delete_selection is a no-op on a read-only grid,
-        so this is safe even if a caller doesn't grey the menu item out."""
+        """Copy then clear. delete_selection is a no-op on a read-only grid, so this
+        is safe even if a caller doesn't grey the menu item out."""
         self.copy()
         self.model.delete_selection(self.ranges())
 
@@ -319,8 +306,8 @@ class GridController:
         self.model.delete_selection(self.ranges())   # no-op on a read-only grid
 
     def context_select(self, x, y):
-        """Right-click: select the cell under the cursor unless it's already inside
-        the selection (a multi-cell selection is kept when you right-click inside it)."""
+        """Right-click: select the cell under the cursor unless it's already inside the
+        selection (keeps a multi-cell selection when you right-click inside it)."""
         region, row, col = self.geom.hit(x, y, self.model.nrows(), self.model.ncols)
         if region != "cell" or row is None or col is None or self._in_selection(row, col):
             return

@@ -1,18 +1,16 @@
 """CoreModel: GridModel backed by the C++ arena engine (gridcore.dll).
 
-Cell text lives in C++. The bulk text paths (copy/delete/paste/find) and undo
-run there in one ctypes call each, avoiding the millions of Python str objects
-that are the pure-Python floor. Everything else (view/filter/sort orchestration,
-styles, choices, readonly, geometry) stays in Python: those touch one column or
-the visible viewport, where per-cell access is already cheap.
+Cell text lives in C++. Bulk text paths (copy/delete/paste/find) and undo run
+there in one ctypes call each, avoiding the millions of Python str objects that
+are the pure-Python floor. Everything else (view/filter/sort, styles, choices,
+readonly, geometry) stays in Python; those touch one column or the viewport,
+already cheap.
 
-`self._rows` is a thin shim delegating to the engine, so every inherited
-GridModel method keeps working unchanged. Only the handful of bulk hot methods
-are overridden to call C++ directly.
+`self._rows` is a shim delegating to the engine, so inherited GridModel methods
+work unchanged; only the bulk hot methods are overridden to call C++.
 
-Scope: data-row mutations. Header rows are read-only through the fast path
-(headers stay Python, as in GridModel). Editing a header cell is not routed
-through this backend. Requires the DLL, make_model() raises without it.
+Scope: data-row mutations only. Header rows stay Python (read-only via the fast
+path). Requires the DLL; make_model() raises without it.
 """
 import ctypes
 import os
@@ -22,7 +20,7 @@ import sys
 from .model import GridModel, _clean, _grow
 from .selection import normalize as _norm_ranges
 
-# installs into core/, beside this file. Windows .dll, Linux .so.
+# installs beside this file
 _EXT = ".dll" if sys.platform == "win32" else ".so"
 _DLL = os.path.join(os.path.dirname(__file__), "gridcore" + _EXT)
 
@@ -63,7 +61,7 @@ _LIB = _load()
 
 
 def _iarr(seq):
-    """A ctypes int array (or None) from a Python iterable."""
+    """ctypes int array (or None) + length from an iterable."""
     seq = list(seq)
     if not seq:
         return None, 0
@@ -71,7 +69,7 @@ def _iarr(seq):
 
 
 def _farr(seq):
-    """A ctypes float array (or None) from a Python iterable."""
+    """ctypes float array (or None) from an iterable."""
     seq = list(seq)
     if not seq:
         return None
@@ -79,7 +77,7 @@ def _farr(seq):
 
 
 def _pack(rows):
-    """Length-prefixed (u32 len + utf-8 bytes) row-major buffer for gc_load_packed."""
+    """Length-prefixed (u32 + utf-8) row-major buffer for gc_load_packed."""
     parts = []
     for r in rows:
         for c in r:
@@ -90,8 +88,8 @@ def _pack(rows):
 
 
 def make_model(headers, rows, editable=True):
-    """CoreModel, backed by the C++ arena engine. Raises if gridcore.dll is
-    missing rather than silently degrading to pure-Python GridModel."""
+    """CoreModel backed by the C++ arena engine. Raises if gridcore.dll is
+    missing (no silent degrade to pure-Python GridModel)."""
     if not _LIB:
         raise RuntimeError(
             "gridcore.dll unavailable, build it with "
@@ -110,10 +108,9 @@ class _CoreRow:
 
 
 class _CoreRows:
-    """Read shim making `self._rows[r][c]` delegate to the C++ engine, so inherited
-    GridModel code (sort/filter/distinct/cell/style) works unchanged. Reads only:
-    every inherited mutation path (set_cell/paste/delete/undo/grow) is overridden
-    to call the engine directly."""
+    """Read-only shim: `self._rows[r][c]` delegates to C++, so inherited GridModel
+    code (sort/filter/distinct/cell/style) works unchanged. Mutations are all
+    overridden to call the engine directly."""
     __slots__ = ("_c",)
 
     def __init__(self, core):
@@ -131,7 +128,7 @@ class _CoreRows:
 
 
 class CoreModel(GridModel):
-    # ---- storage: build the engine instead of a Python matrix ----
+    # ---- storage: engine instead of a Python matrix ----
     def set_data(self, headers, rows):
         if headers and isinstance(headers[0], (list, tuple)):
             hdr = [[str(h) for h in hrow] for hrow in headers]
@@ -149,14 +146,14 @@ class CoreModel(GridModel):
         if data:
             _LIB.gc_load_packed(self._core, _pack(data), len(data))
         self._rows = _CoreRows(self._core)
-        self._init_view_state()                   # _undo holds tagged ops, cell diffs live in C++
+        self._init_view_state()                   # _undo holds tagged ops; cell diffs in C++
 
     def __del__(self):
         c = getattr(self, "_core", None)
         if c and _LIB:
             _LIB.gc_free(c)
 
-    # ---- view: keep GridModel's Python rebuild, then push the mapping to C++ ----
+    # ---- view: GridModel's Python rebuild, then push the mapping to C++ ----
     def _rebuild(self):
         super()._rebuild()
         if self._is_plain():
@@ -175,20 +172,17 @@ class CoreModel(GridModel):
             self._distinct.pop(c, None)
 
     def _push_snap(self, rng):
-        # Cell diff lives in the C++ engine. The Python entry carries the view state
-        # active at this edit + the touched rect (to reselect on undo), tagged to
-        # interleave with 'view' ops.
+        # Cell diff lives in C++. Python entry carries the edit's view state + touched
+        # rect (to reselect on undo), tagged to interleave with 'view' ops.
         self._undo.append(("edit", self._filt_snapshot(), rng))
         del self._undo[:-200]
         self._redo.clear()
 
     def cell(self, gr, col):
-        """Hot path (~1900 calls/frame): read one cell straight from C++. The base
-        GridModel.cell does ``self._rows[r][col]`` which, on the core-backed _CoreRows,
-        allocates a _CoreRow proxy AND calls gc_ndata (a second FFI) for its bounds
-        check. gc_cell already bounds-checks row against nrows() internally (== the same
-        count, since the engine holds data rows only), so call it directly: one FFI, no
-        proxy alloc, identical result. Halves the per-cell FFI + drops an allocation."""
+        """Hot path (~1900 calls/frame): read one cell straight from C++. Base
+        GridModel.cell does ``self._rows[r][col]``, which allocates a _CoreRow proxy
+        and calls gc_ndata (a 2nd FFI) for bounds. gc_cell bounds-checks internally,
+        so call it directly: one FFI, no proxy alloc, same result."""
         if not (0 <= col < self._w):
             return ""
         if gr < self._hdr:
@@ -197,9 +191,9 @@ class CoreModel(GridModel):
         return _LIB.gc_cell(self._core, r, col).decode("utf-8")
 
     def block_text(self, data_rows, cols):
-        """One FFI for a whole viewport's cell text (vs ~1900 gc_cell calls). gc_block
-        returns length-prefixed UTF-8 for data_rows x cols (view-resolved in C++); we
-        unpack once into {(data_idx, col): str}."""
+        """One FFI for a whole viewport (vs ~1900 gc_cell calls). gc_block returns
+        length-prefixed UTF-8 for data_rows x cols (view-resolved in C++); unpack once
+        into {(data_idx, col): str}."""
         data_rows = list(data_rows); cols = list(cols)
         ra, nr = _iarr(data_rows)
         ca, nc = _iarr(cols)
@@ -220,9 +214,9 @@ class CoreModel(GridModel):
 
     def gc_paint_body(self, cols, colx, colw, grs, rowy, row_h, H, fpx, rect_w,
                       sel, single_cell, col_txt, col_zebra, col_bg, wash_even, wash_odd, styles):
-        """Emit the wire bytes for the visible body data cells natively (the ~viewport-
-        sized hot loop). paint._blit_fast marshals geometry/colours/styles; this just
-        crosses to C++ gc_paint_body and returns its buffer. See fastpygrid/csrc."""
+        """Emit wire bytes for the visible body cells natively (the viewport-sized hot
+        loop). paint._blit_fast marshals geometry/colours/styles; this crosses to C++
+        gc_paint_body and returns its buffer. See fastpygrid/csrc."""
         ca, ncol = _iarr(cols)
         ga, nrow = _iarr(grs)
         sa, nsel4 = _iarr(sel)
@@ -295,8 +289,8 @@ class CoreModel(GridModel):
         d_start = max(0, start_gr - H)                  # header-row paste not routed
         rc, n_rc, rr, n_rr = self._ro_arrays()
         pre = _LIB.gc_ndata(self._core)
-        # C++ parses the raw clipboard, fills a 1x1 over a multi-cell selection,
-        # and returns the block dims, no Python split/scan.
+        # C++ parses the clipboard, fills a 1x1 over a multi-cell selection, returns
+        # the block dims, no Python split/scan.
         payload = text.encode("utf-8")
         dims = (ctypes.c_int * 2)()
         changed = _LIB.gc_paste(self._core, d_start, start_col, payload, len(payload),
@@ -345,9 +339,9 @@ class CoreModel(GridModel):
         return True
 
     def grow_cols(self, new_w):
-        """Widen the sheet to `new_w` columns (editing past the last column, uncapped).
-        The C++ core re-strides its buffer, headers gain blank trailing cells. No-op
-        if it already has that many. New columns start blank and are fully editable."""
+        """Widen the sheet to `new_w` columns (editing past the last, uncapped). C++
+        re-strides its buffer, headers gain blank trailing cells. No-op if already
+        that wide. New columns start blank and editable."""
         if new_w <= self._w:
             return
         _LIB.gc_grow_cols(self._core, new_w)
@@ -359,7 +353,7 @@ class CoreModel(GridModel):
         self.changed()
 
     def _replay_edit(self, entry, use_new):
-        # base undo()/redo() dispatch 'view' vs 'edit', a cell edit drives the C++ stack.
+        # base undo()/redo() dispatch 'view' vs 'edit'; a cell edit drives the C++ stack.
         tgt = (ctypes.c_int * 2)()
         fn = _LIB.gc_redo if use_new else _LIB.gc_undo
         if not fn(self._core, tgt):
@@ -376,7 +370,7 @@ class CoreModel(GridModel):
         H = self._hdr
         out = []
         needle = query if case else query.lower()
-        # header rows in Python (tiny), in grid order first
+        # header rows in Python (tiny), grid order first
         hdr_scope = None
         if scope:
             hdr_scope = [(r1, c1, r2, c2) for (r1, c1, r2, c2) in scope if r1 < H]

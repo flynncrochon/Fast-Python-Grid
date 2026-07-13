@@ -1,7 +1,7 @@
 name: Run tests
 
 # Headless core tests (no GL/display). The native libs are gitignored, so each
-# runner compiles just gridcore -- the C++ data engine the CoreModel tests need.
+# runner compiles just gridcore, the C++ data engine the CoreModel tests need.
 # glsurface (the GL renderer) isn't touched by any test, so it's skipped.
 #   Linux:   one g++ line (gridcore.cpp is standalone, no GL/X11/FreeType).
 #   Windows: CMake, which finds MSVC itself and skips the GL find_package (WIN32).

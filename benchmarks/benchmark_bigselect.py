@@ -1,5 +1,5 @@
 """Big-selection stress: drag PAST the fullscreen edges so edge-autoscroll kicks in
-and the selection balloons far beyond the visible viewport -- thousands of rows down,
+and the selection balloons far beyond the visible viewport: thousands of rows down,
 hundreds of columns right, and both at once from the corner.
 
 This drives the REAL path a user's mouse triggers (press -> drag outside the body ->
@@ -71,7 +71,7 @@ def _sel_extent(eng):
 def _fling(eng, past_x, past_y):
     """Press top-left, pin the drag corner `past` px OUTSIDE the body on each axis, then
     pump autoscroll: each frame advances the view at a high (fixed, big) step and extends
-    the selection into the revealed cells -- exactly _autoscroll_tick's work minus its
+    the selection into the revealed cells: exactly _autoscroll_tick's work minus its
     real-time dt (we force a big step so it sweeps off-screen fast). Times each paint."""
     g = eng.geom
     g.top_row = g.hdr_rows; g.scroll_x = 0
@@ -112,7 +112,7 @@ def bench(headers, rows):
 
 def main():
     if _load_lib() is None:
-        print("OpenGL backend (glsurface) not built -- run build.bat"); return 1
+        print("OpenGL backend (glsurface) not built, run build.bat"); return 1
     headers, rows = _dataset()
     w, h, phases = bench(headers, rows)
     print("big-selection benchmark  (%dx%d fullscreen, %d rows x %d cols dataset)\n"

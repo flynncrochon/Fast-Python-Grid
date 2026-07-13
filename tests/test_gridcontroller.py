@@ -27,7 +27,7 @@ def test_state_machine():
     ctl.on_key("Right", False, False, ""); assert ctl.active == (2, 1), ctl.active
     ctl.on_key("a", False, True, "")                            # Ctrl+A selects header+data
     assert ctl.sel == (0, 0, h.model.data_extent()[0], 1), ctl.sel
-    assert ctl.zoom_by(1.1) is None and ctl._zoom != 1.0        # zoom took
+    assert ctl.zoom_to(ctl._zoom * 1.1) is None and ctl._zoom != 1.0   # zoom took
     ctl.sel, ctl.extra, ctl.active = (1, 0, 1, 0), [], (1, 0)   # cut clears the cell, fills clipboard
     ctl.cut(); assert h.clip == "a1" and h.model.cell(1, 0) == "", (h.clip, h.model.cell(1, 0))
     # edit elsewhere, move away, then Ctrl+Z jumps the selection back to the edit

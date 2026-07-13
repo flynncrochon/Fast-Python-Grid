@@ -34,5 +34,5 @@ Repository = "https://github.com/flynncrochon/Fast-Python-Grid"
 # so disable scikit-build-core's own pure-python discovery.
 wheel.packages = []
 # The native bits load via ctypes (not a CPython extension), so one wheel works
-# on any Python 3.x -- tag it py3, not cp38/cp39/...
+# on any Python 3.x; tag it py3, not cp38/cp39/...
 wheel.py-api = "py3"

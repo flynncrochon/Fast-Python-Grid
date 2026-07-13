@@ -1,22 +1,18 @@
-"""OpenGL/GPU renderer engine, TOOLKIT-NEUTRAL.
+"""OpenGL/GPU renderer engine, toolkit-neutral.
 
-Blits the core display list (paint()) onto an OpenGL 1.1 surface driven by a small
-C-ABI DLL (see ../csrc/glsurface.cpp), loaded via ctypes. The GPU compositor keeps the
-zoomed-out full-rebuild cheap. Scrolling just repaints the viewport and Presents.
+Blits the core display list (paint()) onto an OpenGL 1.1 surface driven by a
+C-ABI DLL (../csrc/glsurface.cpp) via ctypes.
 
-This module imports NO GUI toolkit. It provides:
-  * GpuEngine: owns model/geometry/controller, the Gpu surface, and ALL
-    rendering, overlays (editor/dropdown/filter/find), scrollbars and normalized
-    input logic. Talks to a `host` adapter for toolkit bits (see the host contract
-    on GpuEngine). This makes a Tk host and a Qt host thin, interchangeable wrappers.
-  * GpuCanvas: the core.render.blit backend that packs each primitive into the
-    wire buffer glsurface.cpp decodes.
-  * TextField: a custom text-input control (measures via a host callable).
+Provides:
+  * GpuEngine: owns model/geometry/controller, the surface, and all rendering,
+    overlays (editor/dropdown/filter/find), scrollbars and input logic. Talks to
+    a `host` adapter for toolkit bits, so Tk/Qt hosts are thin wrappers.
+  * GpuCanvas: core.render.blit backend packing primitives into the wire buffer
+    glsurface.cpp decodes.
+  * TextField: custom text-input control (measures via a host callable).
 
-Host adapters live in their own files: fastpygrid.render.tk (Tk) and
-fastpygrid.render.qt (Qt). Use those modules' make_sheet() to launch.
-
-Build once:  build.bat   (compiles the DLLs and copies the package into dist\fastpygrid)
+Hosts: fastpygrid.render.tk / .qt; use their make_sheet() to launch.
+Build: build.bat (compiles DLLs, copies package into dist\fastpygrid).
 """
 import ctypes
 import gc
@@ -36,14 +32,14 @@ from .paint import (paint, edit_colors, DisplayList, _prelude, _chrome, _dropdow
                     _blend, SEL_WASH_A)
 from .render import blit, blit_fast
 
-# Chrome colors for the custom overlays, decoupled from the cell palette.
-_UI_BG = "#ece7dd"          # find bar (light)
-# filter popup: a dark panel (darker than the white grid body) with light text
+# Overlay chrome colors, decoupled from the cell palette.
+_UI_BG = "#ece7dd"          # find bar
+# filter popup: dark panel, light text
 _PANEL_BG = "#2b2a26"
 _PANEL_FG = "#e8e5dc"
-_PANEL_SUB = "#3a3934"      # input field / row backing on the dark panel
+_PANEL_SUB = "#3a3934"      # input field / row backing
 _PANEL_HI = "#4a463d"       # hovered row / button
-# scrollbars (track + thumb, thumb brightens to the accent on hover/drag)
+# scrollbars (track + thumb)
 _SB_TRACK = "#e3e0d6"
 _SB_THUMB = "#b7b1a3"
 _SB_TRACK_DK = "#232220"    # on the dark filter panel
@@ -66,7 +62,7 @@ def _sb_offset(pos, grab, track_start, track_len, tlen, content, view):
     span = max(1, track_len - tlen)
     return int(round((pos - grab - track_start) / span * (content - view)))
 
-_DLL_DIR = os.path.dirname(__file__)          # the .dll/.so installs into core/, beside this file
+_DLL_DIR = os.path.dirname(__file__)          # .dll/.so installs beside this file in core/
 
 
 def _lib_path():
@@ -74,21 +70,17 @@ def _lib_path():
     return os.path.join(_DLL_DIR, "glsurface" + ext)
 
 
-# UI font name for the toolkit hosts' width MEASUREMENT. It must match the font the
-# surface actually rasterizes so ellipsis-trim / centering line up: Windows GDI uses
-# Segoe UI (glsurface.cpp), the Linux FreeType backend uses DejaVu Sans.
+# Host width-measurement font. Must match what the surface rasterizes so
+# ellipsis-trim/centering line up: Win GDI = Segoe UI, Linux FreeType = DejaVu Sans.
 UI_FONT = "Segoe UI" if sys.platform == "win32" else "DejaVu Sans"
 
 
 def _load_lib():
-    """Load the glsurface render backend (OpenGL 1.1, cross-platform), or None if it
-    isn't built / can't load. Exports the C-ABI below. make_sheet() raises a build
-    hint on None."""
-    # Vsync OFF by default across the app: the vblank wait was pure idle time (~10 ms/
-    # frame doing nothing) and capped animation fps at the refresh rate. The backend
-    # reads this env once at context creation, so set it before the first gpu_attach.
-    # (Matches the flipped C++ default in glsurface.cpp; this makes it take effect with
-    # an already-built DLL too. Set FASTPYGRID_VSYNC=1 to force vsync back on.)
+    """Load the glsurface backend, or None if not built / can't load. make_sheet()
+    raises a build hint on None."""
+    # Vsync OFF by default: the vblank wait was idle time capping fps at refresh
+    # rate. Backend reads this env once at context creation, before first gpu_attach.
+    # FASTPYGRID_VSYNC=1 forces it back on.
     os.environ.setdefault("FASTPYGRID_VSYNC", "0")
     path = _lib_path()
     if not os.path.exists(path):
@@ -101,7 +93,7 @@ def _load_lib():
     sig = {
         "gpu_probe_pixel": ([C, I, I, I, I, I], ctypes.c_uint32),
         "gpu_attach": ([P, I, I], P),
-        "gpu_render": ([P, C, I, I, I], None),   # ..., clear_rgb, animating (zoom-glide: scaled glyphs)
+        "gpu_render": ([P, C, I, I, I], None),   # ..., clear_rgb, animating (zoom glide)
         "gpu_resize": ([P, I, I], None),
         "gpu_detach": ([P], None),
     }
@@ -112,8 +104,8 @@ def _load_lib():
 
 
 def build():
-    """Build the whole dist (all .py + both DLLs) via the repo build.bat.
-    Dev-only: build.bat and the .cpp source aren't in the shipped package."""
+    """Build the dist (all .py + both DLLs) via build.bat. Dev-only: build.bat and
+    the .cpp source aren't in the shipped package."""
     root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
     bat = os.path.join(root, "build.bat")
     return subprocess.call([bat], cwd=root, shell=True) == 0
@@ -121,9 +113,8 @@ def build():
 
 _COL_CACHE = {}
 def _col(c):
-    """'#rrggbb' -> 0xRRGGBB int, falsy -> -1 (means 'no fill/outline'). Memoized:
-    called ~6k times/frame over a handful of distinct theme colors, so the hex parse
-    is a dict hit after the first."""
+    """'#rrggbb' -> 0xRRGGBB int, falsy -> -1 (no fill/outline). Memoized: ~6k
+    calls/frame over few distinct colors."""
     if not c:
         return -1
     v = _COL_CACHE.get(c)
@@ -142,15 +133,13 @@ def _box_union(a, b):
 
 
 def _enable_dpi_awareness():
-    """Windows: make the process DPI-aware so the surface renders sharp instead of
-    being bitmap-stretched by the OS on a hi-DPI display. No-op elsewhere.
+    """Windows: make the process DPI-aware so the surface renders sharp, not
+    bitmap-stretched on hi-DPI. No-op elsewhere.
 
-    Also disables Qt's own HighDPI scaling: the engine works in PHYSICAL px, so Qt
-    must report physical coords/sizes (dpr==1) or every click maps toward the origin
-    and the surface renders into a 1/dpr corner. These env vars only take effect if
-    set BEFORE QApplication. Both Qt entry points call this right before creating
-    it, so this is the reliable place (module-import timing in render.qt is too late when
-    the app is built first, e.g. the demo). No-op for Tk."""
+    Also disables Qt HighDPI scaling: the engine works in physical px, so Qt must
+    report dpr==1 or clicks map toward the origin and the surface renders into a
+    1/dpr corner. Env vars must be set before QApplication; both Qt entry points
+    call this right before creating it. No-op for Tk."""
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
     os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
     try:
@@ -164,9 +153,8 @@ def _enable_dpi_awareness():
 
 
 def _check_poly(ax, ay, bx, by, cx, cy, h):
-    """Outline of a checkmark stroke (centerline a->b->c, half-thickness h) as a
-    filled polygon (mitered joins, so the bend is clean, since a two-line stroke
-    leaves a butt-cap notch at the vertex)."""
+    """Checkmark stroke (centerline a->b->c, half-thickness h) as a filled polygon
+    with mitered joins (a two-line stroke leaves a notch at the bend)."""
     def nrm(dx, dy):
         L = math.hypot(dx, dy) or 1.0
         return -dy / L, dx / L                     # left normal, unit
@@ -185,14 +173,13 @@ def _screen_scale(win):
     """DPI scale factor (1.0 at 96 DPI, 1.5 at 150%, …)."""
     try:
         import ctypes as _c
-        return max(1.0, _c.windll.user32.GetDpiForSystem() / 96.0)   # Win10+; Tk/Qt hosts both
+        return max(1.0, _c.windll.user32.GetDpiForSystem() / 96.0)   # Win10+
     except Exception:
         return 1.0
 
 
-# Compiled wire packers (tag byte baked in as the leading 'c', so one pack call emits
-# tag+payload -- no format-string reparse and no `b"R" +` concat per primitive; hot at
-# ~4k packs/frame).
+# Compiled wire packers (tag byte baked in as leading 'c' -> one pack emits
+# tag+payload, no reparse/concat per primitive; ~4k packs/frame).
 _PK_R = struct.Struct("<cffffiif").pack
 _PK_T = struct.Struct("<cffffifBH").pack
 _PK_X = struct.Struct("<cfffffifBH").pack
@@ -203,26 +190,23 @@ _PK_FF = struct.Struct("<ff").pack
 
 class GpuCanvas:
     """core.render.blit backend: buffers primitives into the packed wire format
-    (see glsurface.cpp header) instead of drawing directly. The host ships
-    bytes(canvas.buf) to the DLL once per frame: one native call, not one per
-    primitive (the Python->native boundary is the cost worth avoiding)."""
+    (glsurface.cpp header). Host ships bytes(canvas.buf) to the DLL once per frame,
+    one native call, not one per primitive."""
 
     def __init__(self, fpx, scale=1.0):
-        self.fpx = float(fpx)          # cell-text pixel size, glyph() carries its own
+        self.fpx = float(fpx)          # cell-text pixel size
         self.s = scale
         self.buf = bytearray()
-        self._w1 = max(1, round(scale))   # a 1px stroke in device px (precomputed for rect_fill)
+        self._w1 = max(1, round(scale))   # 1px stroke in device px (for rect_fill)
 
     def rect(self, x, y, w, h, fill=None, outline=None, width=1):
-        # round the stroke width to whole px so outlines/rings/dividers land at a
-        # consistent thickness on a hi-DPI display
+        # whole-px stroke width -> consistent thickness on hi-DPI
         self.buf += _PK_R(b"R", x, y, w, h,
                           _col(fill), _col(outline), max(1, round(width * self.s)))
 
     def rect_fill(self, x, y, w, h, fill):
-        # Fill-only rect: the hot path (every cell background). Skips the outline colour
-        # parse (always -1) and the stroke-width round (constant) that `rect` redoes per
-        # call -- ~2900 cells/frame, so those two ops dominate the throughput ceiling.
+        # Fill-only rect, the hot path (~2900 cells/frame): skips the outline parse
+        # and stroke-width round that `rect` redoes per call.
         self.buf += _PK_R(b"R", x, y, w, h, _col(fill), -1, self._w1)
 
     def _text(self, x, y, w, h, s, color, size, bold, center):
@@ -249,18 +233,16 @@ class GpuCanvas:
             self.buf += _PK_FF(px, py)
 
     def barrier(self):
-        """Layer break. The GL backend batches cell fills ahead of text for speed;
-        anything emitted after this (overlay widgets) must stay on top, so this forces
-        the batch out first."""
+        """Layer break: GL batches cell fills ahead of text, so overlay widgets
+        emitted after this force the batch out to stay on top."""
         self.buf += b"F"
 
     def glyph(self, cx, cy, s, color, px):
-        # one char centered on (cx, cy) at its own pixel size -> a centered text op
+        # one char centered on (cx, cy) at its own px size
         self._text(cx - px, cy - px, 2 * px, 2 * px, s, color, float(px), False, True)
 
     def combo(self, x, y, w, h):
-        """Drop button: thin box + filled chevron, decomposed to rect+poly here so
-        the DLL only needs R/L/P/T (mirrors the Tk/Qt combo drawing)."""
+        """Drop button: box + chevron as rect+poly so the DLL only needs R/L/P/T."""
         sz = max(8, round(h) - 8)
         bx, by = x + w - sz - 3, y + (h - sz) / 2
         self.rect(bx, by, sz, sz, outline=T.BTN_BORDER)
@@ -271,15 +253,14 @@ class GpuCanvas:
 
 
 class TextField:
-    """Custom single-line text input rendered with GpuCanvas primitives, no Tk
-    widget. The owner feeds it key/mouse events and calls draw() each frame. It
-    owns text, caret, selection, horizontal scroll, and clipboard. Measures widths
-    with a `measure` callable the host provides (toolkit-neutral)."""
+    """Single-line text input drawn with GpuCanvas primitives (no Tk widget). Owner
+    feeds key/mouse events and calls draw() each frame. Owns text, caret, selection,
+    horizontal scroll, clipboard. Widths via a host `measure` callable."""
 
     def __init__(self, measure, text="", clipboard=None):
-        self.measure = measure                   # callable: (text, bold) -> px width (toolkit-neutral)
+        self.measure = measure                   # (text, bold) -> px width
         self.clip = clipboard                    # (get, set) callables, or None
-        self.bold = False                        # match the edited cell's weight (caret/scroll widths)
+        self.bold = False                        # match edited cell weight (caret/scroll widths)
         self.focused = True
         self.set_text(text)
 
@@ -298,7 +279,7 @@ class TextField:
             if d < bestd:
                 best, bestd = i, d
             elif d > bestd:
-                break                            # width is monotonic in i -> past the min
+                break                            # width monotonic in i -> past the min
         return best
 
     def _sel(self):
@@ -361,7 +342,7 @@ class TextField:
             self.insert(char); return None
         else:
             return None
-        if not shift:                            # a bare movement collapses the selection
+        if not shift:                            # bare movement collapses the selection
             self.anchor = self.caret
         return None
 
@@ -389,7 +370,7 @@ class TextField:
         self.anchor, self.caret = a, b
 
     def draw(self, cv, x, y, w, h, bg, fg, accent, border=True, bold=False):
-        pad = cv.fpx * 5 / 13                     # match the cell-text left pad (glsurface.cpp 'T' op)
+        pad = cv.fpx * 5 / 13                     # match cell-text left pad (glsurface.cpp 'T' op)
         avail = max(1, w - 2 * pad)
         cx = self._w(self.caret)                 # keep the caret in view
         if cx - self.xscroll > avail:
@@ -412,10 +393,9 @@ class TextField:
 
 
 class GpuEngine:
-    """Toolkit-NEUTRAL grid engine: owns the model/geometry/controller, the Gpu
-    surface, and ALL rendering, overlay (editor/dropdown/filter/find), scrollbar
-    and input LOGIC. Knows nothing about Tk or Qt: it talks to a `host` adapter
-    for the toolkit-specific bits, so a Tk host and a Qt host are thin wrappers.
+    """Toolkit-neutral grid engine: owns model/geometry/controller, the surface, and
+    all rendering, overlays (editor/dropdown/filter/find), scrollbar and input logic.
+    Talks to a `host` adapter for toolkit bits, so Tk/Qt hosts are thin wrappers.
 
     Host adapter contract (see TkHost):
         host.measure(text, bold=False) -> int      text width in px
@@ -424,18 +404,18 @@ class GpuEngine:
         host.focus(), host.set_cursor(on_edge), host.fullscreen_toggle()
         host.size() -> (w, h), host.hwnd() -> int
         host.set_zoom_px(px), host.context_menu(root_xy, editable, actions)
-    The engine is also the GridController's host surface. Input arrives already
-    normalized: press/motion/drag/release/wheel/key/configure/context."""
+    Also the GridController's host surface. Input arrives normalized:
+    press/motion/drag/release/wheel/key/configure/context."""
 
     def __init__(self, host, model, editable=True, frozen=0, col_w=None, scale=1.0, lib=None,
                  uncap_rows=False, uncap_cols=False, filters=True):
         self.host = host
         self.model = model
         self.editable = editable
-        self._lib = lib          # make_sheet/make_qt load it and raise before we get here
+        self._lib = lib          # make_sheet/make_qt load it and raise before here
         s = self._scale = scale
         self._base_fpx = 13 * s
-        self._fpx = max(9.0, self._base_fpx)   # float: exact size for the GPU text op
+        self._fpx = max(9.0, self._base_fpx)   # float: exact GPU text-op size
         widths = [max(24, round(w * s)) for w in (col_w or [120] * model.ncols)]
         self.geom = Geometry(widths, frozen, gutter_w=max(28, round(56 * s)),
                              row_h=max(14, round(22 * s)), hdr_rows=model.header_rows,
@@ -443,46 +423,43 @@ class GpuEngine:
         self.ctl = GridController(self, base_row_h=22 * s, base_gutter=56 * s, base_w=widths)
         self._measure = lambda t, b=False: self.host.measure(t, b)   # for TextField
         self._surf = None
-        self._editor = None          # open custom in-cell editor state, or None
-        self._dbl = (0.0, 0, 0)      # (time, x, y) of the last editor word-select, for triple detect
-        self._dropdown = None        # open custom dropdown state, or None
-        self._find = None            # open custom find bar state, or None
-        self._filter = None          # open custom filter popup state, or None
+        self._editor = None          # open in-cell editor state, or None
+        self._dbl = (0.0, 0, 0)      # (time,x,y) of last word-select, for triple detect
+        self._dropdown = None        # open dropdown state, or None
+        self._find = None            # open find bar state, or None
+        self._filter = None          # open filter popup state, or None
         self._sbw = max(12, round(14 * s))            # scrollbar thickness
         self._vsb = {"hover": False, "drag": False, "grab": 0, "thumb": None}
         self._hsb = {"hover": False, "drag": False, "grab": 0, "thumb": None}
-        self._ptr = None             # last pointer (x, y): re-check hover when a thumb slides under it
-        self._arrow = False          # pointer is over a ▼ dropdown button (hand cursor)
+        self._ptr = None             # last pointer (x,y): re-check hover when thumb slides under
+        self._arrow = False          # pointer over a ▼ button (hand cursor)
         self._next = None
         self._paint_pending = False
-        self._in_drag = False        # true while a mouse drag gesture is in flight
+        self._in_drag = False        # true during a drag gesture
         self._autoscroll_after = None   # edge-autoscroll timer handle (selection drag)
-        self._autoscroll_acc = [0.0, 0.0]   # fractional px (vertical, horizontal) carried between autoscroll ticks
-        self._autoscroll_t = 0.0        # perf_counter of the last autoscroll tick (for real-dt velocity)
+        self._autoscroll_acc = [0.0, 0.0]   # fractional px (v,h) carried between ticks
+        self._autoscroll_t = 0.0        # perf_counter of last tick (real-dt velocity)
         self._drag_xy = None            # last grid-drag pointer pos (for the timer)
-        # smooth (inertial) wheel scrolling: wheel adds to a float pixel TARGET and an
-        # animation eases the live position toward it a fraction per frame, so panning
-        # glides instead of snapping whole rows. See _scroll_smooth / _scroll_anim_tick.
+        # inertial wheel scroll: wheel adds to a float px target, animation eases
+        # live pos toward it per frame. See _scroll_smooth / _scroll_anim_tick.
         self._scroll_after = None       # animation timer handle, or None when idle
-        self._scroll_pos = None         # [x, y] float px the animation is easing from
+        self._scroll_pos = None         # [x, y] float px the animation eases from
         self._scroll_to = None          # [x, y] float px target
-        self._scroll_last = None        # (scroll_x, scroll_y) we last wrote (detect external scroll)
-        # track-click paging: hold on the track and the view keeps gliding toward the
-        # pointer (Excel-style), stopping once the thumb reaches it. See _start_sbpage.
+        self._scroll_last = None        # (scroll_x, scroll_y) last written (detect external scroll)
+        # track-click paging: hold on the track, view glides toward the pointer
+        # (Excel-style), stops when the thumb reaches it. See _start_sbpage.
         self._sbpage_after = None       # repeat timer handle, or None when idle
         self._sbpage = None             # (axis, track_pos) currently being paged toward
-        self._sbpage_pos = None         # float scroll pos for the page glide (sub-pixel, like the wheel)
-        # smooth zoom: a Ctrl+wheel notch multiplies a float target, an animation eases
-        # the live zoom toward it a fraction per frame (mirrors the scroll glide above).
+        self._sbpage_pos = None         # float scroll pos for the page glide (sub-pixel)
+        # smooth zoom: Ctrl+wheel multiplies a float target, animation eases live
+        # zoom toward it (mirrors the scroll glide).
         self._zoom_after = None         # zoom animation timer handle, or None when idle
         self._zoom_to = None            # target zoom factor
-        self._zoom_t = 0.0              # perf_counter of the last zoom-ease tick (real-dt)
-        self._zoomfps = os.environ.get("FASTPYGRID_ZOOMFPS") == "1"   # print real glide fps
-        self._zoom_frames = []          # render timestamps for the current glide (fps probe)
+        self._zoom_t = 0.0              # perf_counter of last zoom-ease tick (real-dt)
         model.changed = lambda: self._coalesce(self.redraw)
 
-    # --- surface lifecycle (lazy: device is created on the first Configure, AFTER
-    # the window maps, so make_sheet() stays instant, load time is unchanged) --
+    # --- surface lifecycle (lazy: device created on first Configure, after the
+    # window maps, so make_sheet() stays instant) ---
     def _attach(self):
         if self._surf is not None:
             return
@@ -490,30 +467,24 @@ class GpuEngine:
         if w < 2 or h < 2:
             return
         self._surf = self._lib.gpu_attach(self.host.hwnd(), w, h) or None
-        # The child HWND is freshly mapped and our WM_PAINT is a no-op (we rely on the
-        # last gpu_render present persisting via DWM). On first show there's no prior
-        # present, so the first render can race the window becoming visible and leave it
-        # white until a click/resize. Force one more render once the loop settles.
+        # WM_PAINT is a no-op (we rely on the last gpu_render present persisting via
+        # DWM). On first show there's no prior present, so the first render can race
+        # the window becoming visible and leave it white. Force one more once settled.
         if self._surf is not None:
             self.host.after_idle(self.redraw)
 
     def redraw(self):
-        # During a drag, Windows fires mouse-move faster than a full paint+blit+GPU
-        # upload completes, and on_drag asks for a repaint per event. Coalesce to one
-        # render per idle so the selection keeps up with the cursor instead of a
-        # backlog of synchronous renders queueing. (Tk/Qt hosts coalesce natively.)
-        # Same rationale for the zoom glide: the ease timer ticks ~165 Hz (_ZOOM_MS)
-        # and each tick asks for a paint, faster than a full paint+GPU upload drains on
-        # a heavy sheet. Coalesce to one render per idle so ticks can't backlog. The
-        # zoom level advances on the timer independent of paint, so a dropped frame just
-        # renders the latest level -- motion stays correct, it only sheds unseen uploads.
+        # Drag fires mouse-move faster than paint+blit+upload completes, and the zoom
+        # ease timer ticks ~165 Hz; both ask for a repaint per event/tick. Coalesce to
+        # one render per idle so renders can't backlog. Zoom level advances on the
+        # timer independent of paint, so a dropped frame just renders the latest level.
         if self._in_drag or self._zoom_to is not None:
             self._coalesce(self._paint_now); return
         self._paint_now()
 
     def paint_to(self, cv):
-        """Draw one frame onto the GL wire-buffer canvas `cv`. Returns False if the
-        surface is too small to draw. The single render sequence."""
+        """Draw one frame onto the wire-buffer canvas `cv`. False if the surface is too
+        small. The single render sequence."""
         sw, sh = self.host.size()
         if sw < 2 or sh < 2:
             return False
@@ -526,7 +497,7 @@ class GpuEngine:
         self._draw_scrollbars(cv, sw, sh)
         if self._editor or self._dropdown or self._filter or self._find:
             cv.barrier()                      # keep overlay fills above the batched grid (GL)
-        if self._editor:                      # custom widgets drawn on top of the grid
+        if self._editor:                      # widgets drawn on top of the grid
             self._draw_editor(cv)
         if self._dropdown:
             self._draw_dropdown(cv)
@@ -537,19 +508,17 @@ class GpuEngine:
         return True
 
     def _blit_fast(self, cv):
-        """Native body path: the ~viewport-sized data-cell loop runs in C++
-        (gc_paint_body) and its wire bytes splice straight into the GpuCanvas buffer;
-        only the cheap chrome (gutter/headers/letter/overlays) stays in Python. Returns
-        True if it built the frame. Falls back (returns False) for models without the
-        C++ core or when a find is active (per-cell needle match kept in Python)."""
+        """Native body path: the viewport data-cell loop runs in C++ (gc_paint_body),
+        its wire bytes splice into the GpuCanvas buffer; only chrome stays in Python.
+        True if it built the frame; False (fallback) with no C++ core or an active
+        find (per-cell needle match stays in Python)."""
         m, g = self.model, self.geom
         if getattr(m, "_find_needle", "") or not hasattr(m, "gc_paint_body"):
             return False
         C = _prelude(m, g, self.ctl.ranges())
         fz = g.frozen
-        # Scrollable cols and frozen cols emitted as SEPARATE body wires (layers A and
-        # B, see DisplayList / blit_fast): frozen splices behind a barrier so a
-        # scrollable cell scrolled under the frozen band can't bleed text over it.
+        # Scrollable and frozen cols emit as separate body wires: frozen splices
+        # behind a barrier so scrolled cells can't bleed text over the frozen band.
         scr = [c for c in C.cols if c >= fz]
         frz = [c for c in C.cols if c < fz]
         grs = list(C.data_rows)
@@ -562,8 +531,8 @@ class GpuEngine:
         _dropdowns(m, C, chrome.drops, chrome.frozen_drops)
         _chrome(m, C, self.ctl.active, self.ctl.corner_hover,
                 chrome.frozen, chrome.chrome, chrome.overlays)
-        # chrome.frozen = L1 Python cells (gutter + scrollable header/letter, joins
-        # frz_wire); chrome.chrome = L2 pins. scr_wire = L0, frz_wire = frozen body (L1).
+        # chrome.frozen = L1 Python cells (gutter + header/letter, joins frz_wire);
+        # chrome.chrome = L2 pins. scr_wire = L0, frz_wire = frozen body (L1).
         blit_fast(chrome.chrome, chrome.frozen, scr_wire, frz_wire, body_box,
                   chrome.drops, chrome.frozen_drops, chrome.overlays, cv)
         return True
@@ -576,9 +545,9 @@ class GpuEngine:
         g = self.geom
         colx = [g.col_x(c) for c in cols]
         colw = [g.col_width(c) for c in cols]
-        # Style overrides gathered VIEWPORT-BOUNDED: look up only the visible cells'
-        # styles, never iterate the whole (possibly 100k-entry) style map. Key is
-        # (source_row, col) == C++ combined(gr-H), matching _style_key for data.
+        # Style overrides gathered viewport-bounded: look up only visible cells'
+        # styles, never iterate the whole (100k-entry) style map. Key is
+        # (source_row, col), matching _style_key for data.
         styles = []
         sd = m._styles
         if sd:
@@ -609,17 +578,8 @@ class GpuEngine:
                 return
         cv = GpuCanvas(self._fpx, self._scale)
         anim = 1 if self._zoom_to is not None else 0          # zoom glide: renderer scales cached glyphs
-        if self._zoomfps and self._zoom_to is not None:       # FASTPYGRID_ZOOMFPS=1: split build vs upload
-            t0 = time.perf_counter()
-            ok = self.paint_to(cv)
-            t1 = time.perf_counter()
-            if ok:
-                self._lib.gpu_render(self._surf, bytes(cv.buf), len(cv.buf), _col(T.BG), anim)
-                t2 = time.perf_counter()
-                self._zoom_frames.append((t2, (t1 - t0) * 1000, (t2 - t1) * 1000))
-            return
         if self.paint_to(cv):
-            self._lib.gpu_render(self._surf, bytes(cv.buf), len(cv.buf), _col(T.BG), anim)
+            self._lib.gpu_render(self._surf, bytes(cv.buf), len(cv.buf), _col(T.LETTER_BG), anim)
 
     # --- GridController host surface (delegates toolkit bits to self.host) ---
     def after_scroll_change(self):   self._coalesce(self.redraw)
@@ -628,7 +588,7 @@ class GpuEngine:
     def set_edge_cursor(self, on):   # ctl.on_motion drives this, hand wins over default
         self._set_cursor("resize" if on else ("hand" if self._arrow else ""))
 
-    def _set_cursor(self, kind):     # dedup so we don't re-set every motion (flicker)
+    def _set_cursor(self, kind):     # dedup to avoid re-setting every motion (flicker)
         if kind != getattr(self, "_cursor", None):
             self._cursor = kind
             self.host.set_cursor(kind)
@@ -646,8 +606,8 @@ class GpuEngine:
                     and m.cell_choices(row, col) is not None
                     and g.dropdown_btn_hit(x, y, row, col))         # data-cell dropdown ▼
     def clipboard_get(self):
-        # Jira/browser tables ship as an HTML <table>, flatten it here to plain TSV so
-        # both the Python and C++ models paste it with their existing tab/newline split.
+        # HTML <table> clipboard flavor -> flatten to TSV so both models paste it
+        # with their existing tab/newline split.
         html = getattr(self.host, "clip_get_html", lambda: "")()   # table flavor, if any
         if html:
             from .model import _parse_html_table
@@ -660,10 +620,9 @@ class GpuEngine:
     def open_filter_popup(self, col):
         self._open_filter(col)
 
-    # --- custom find bar drawn top-right on the surface (no Tk widget). Modal-ish:
-    # keys route to the query field. Enter=next, Shift+Enter=prev, Esc closes,
-    # clicking off the bar closes it. Match highlights come from FindController -> the
-    # model find-state -> paint(). ---
+    # --- find bar (top-right, no Tk widget). Keys route to the query field:
+    # Enter=next, Shift+Enter=prev, Esc/click-off closes. Match highlights:
+    # FindController -> model find-state -> paint(). ---
     def reveal_find(self):
         if self._find is None:
             tf = TextField(self._measure, "", clipboard=(self.host.clip_get, self.host.clip_set))
@@ -752,12 +711,12 @@ class GpuEngine:
             self.host.focus()
             self.redraw()
 
-    # --- custom filter popup drawn on the surface (no Tk widget): sort buttons, a
-    # search field, a scrollable checkbox list, OK/Cancel. Modal while open. The
-    # distinct scan runs deferred so opening is instant even on a huge column. ---
+    # --- filter popup (no Tk widget): sort buttons, search field, scrollable
+    # checkbox list, OK/Cancel. Modal. Distinct scan deferred so opening is
+    # instant on a huge column. ---
     def _open_filter(self, col):
-        # Measure at base font size (÷ current zoom), so the search caret matches the
-        # zoom-independent text the popup draws. host.measure uses the zoomed font.
+        # Measure at base font size (÷ zoom) so the caret matches the zoom-independent
+        # popup text; host.measure uses the zoomed font.
         base_measure = lambda t, b=False: round(self.host.measure(t, b) * self._base_fpx / max(1, self._fpx))
         tf = TextField(base_measure, "", clipboard=(self.host.clip_get, self.host.clip_set))
         self._filter = {"ctl": FilterController(self.model, col), "col": col, "tf": tf,
@@ -778,11 +737,11 @@ class GpuEngine:
 
     def _draw_filter(self, cv):
         f, g, s = self._filter, self.geom, self._scale
-        # Size is pinned to the DPI scale s, NOT the grid zoom: row_h / _fpx / col_w
-        # all grow with Ctrl+wheel zoom, but the popup should stay one constant size.
+        # Size pinned to DPI scale s, not grid zoom: the popup stays constant size
+        # while row_h/_fpx/col_w grow with Ctrl+wheel zoom.
         rh, pad = max(14, round(22 * s)), round(5 * s)
         W = round(220 * s)
-        saved_fpx, cv.fpx = cv.fpx, max(9, round(13 * s))   # popup text at base size too
+        saved_fpx, cv.fpx = cv.fpx, max(9, round(13 * s))   # popup text at base size
         x = max(pad, min(g.col_x(f["col"]), g.w - W - pad))
         y = g.header_h                                       # flush under the column's ▼ button
         ctl = f["ctl"]
@@ -791,14 +750,14 @@ class GpuEngine:
         items = (["\0all"] + list(rows)) if f["loaded"] else []
         capped_hint = f["loaded"] and ctl.capped and not f["tf"].text.strip()
         if capped_hint:
-            items = items + ["\0capped"]  # trailing "too many" caption, drawn as the last list row
+            items = items + ["\0capped"]  # trailing "too many" caption row
         avail = g.h - y - 2 * pad
         fixed = 7 * rh + 3 * pad          # sortA, sortZ, sortcolor, clearsort, clear, filtercolor, search
         nvis = max(1, min(len(items) or 1, (avail - fixed - rh - 2 * pad) // rh, 12))
         listh = nvis * rh
         H = fixed + listh + 2 * pad + rh                      # + OK/Cancel row
         cv.rect(x - 1, y - 1, W + 2, H + 2, fill="#000000")   # border
-        cv.rect(x, y, W, H, fill=_PANEL_BG)                   # dark panel (darker than the grid)
+        cv.rect(x, y, W, H, fill=_PANEL_BG)                   # dark panel
         lay, cy = {}, y + pad
 
         def button(key, label, enabled=True, arrow=False):
@@ -823,7 +782,7 @@ class GpuEngine:
         button("clearsort", "Clear Sort", self.model.has_sort(f["col"]))
         button("clear", "Clear Filter", self.model.has_filter(f["col"]))
         button("filtercolor", "Filter by Color", have_colors, arrow=True)
-        f["tf"].focused = True                               # search field (dark input)
+        f["tf"].focused = True                               # search field
         f["tf"].draw(cv, x + pad, cy + 1, W - 2 * pad, rh - 2, _PANEL_SUB, _PANEL_FG, T.ACCENT)
         lay["field"] = (x + pad, cy + 1, W - 2 * pad, rh - 2)
         cy += rh + pad
@@ -852,15 +811,14 @@ class GpuEngine:
             ry = cy + i * rh
             hov = ii == f.get("hoverrow")
             cv.rect(x + pad, ry, lw, rh - 1, fill=_PANEL_HI if hov else _PANEL_BG)
-            # checkbox drawn as primitives (not a ☑/☐ glyph: font fallback rendered
-            # the two states at different sizes). Box is always identical, only the
-            # tick appears. Label x is fixed, so it never shifts on (un)check.
+            # checkbox as primitives (a ☑/☐ glyph font-fell-back to different sizes).
+            # Box is constant, only the tick appears; label x fixed so it never shifts.
             bs = max(8, rh - round(9 * s))
             bx, by = x + pad + round(3 * s), ry + (rh - bs) // 2
-            # checked: filled accent box + white tick (high contrast). unchecked: dark box
+            # checked: accent box + white tick; unchecked: dark box
             cv.rect(bx, by, bs, bs, fill=T.ACCENT if checked else _PANEL_SUB,
                     outline=T.ACCENT if checked else _PANEL_FG)
-            if checked:                          # crisp mitered tick as one filled poly
+            if checked:                          # mitered tick as one filled poly
                 cv.poly(_check_poly(bx + bs * 0.23, by + bs * 0.53,
                                     bx + bs * 0.42, by + bs * 0.71,
                                     bx + bs * 0.77, by + bs * 0.29, bs * 0.085), "#ffffff")
@@ -915,12 +873,12 @@ class GpuEngine:
         ay = max(pad, min(trig[1], self.geom.h - fh - pad))
         cv.rect(ax - 1, ay - 1, fw + 2, fh + 2, fill="#000000")
         cv.rect(ax, ay, fw, fh, fill=_PANEL_BG)
-        # hit region padded toward the panel so the cursor crosses the small
-        # button->flyout gap without the submenu blinking shut.
+        # hit region padded toward the panel so the cursor crosses the button->flyout
+        # gap without the submenu blinking shut.
         f["flybounds"] = (ax - 2 * pad, ay - pad, fw + 4 * pad, fh + 2 * pad)
         active = (self.model._sort if kind == "sort"
                   else self.model._color_filters.get(f["col"]))
-        sww = fw - round(40 * s)                              # swatch width, centered in the row
+        sww = fw - round(40 * s)                              # swatch width, centered
         sxc = ax + (fw - sww) // 2
         hits, cy = [], ay + pad
         for header, which, items, empty in sections:
@@ -985,7 +943,7 @@ class GpuEngine:
             if self._in(thumb, x, y):                        # grab the thumb -> drag
                 f["sbdrag"] = True
                 f["sbgrab"] = y - thumb[1]
-            elif thumb:                                      # hold -> glide toward the click (Excel-style)
+            elif thumb:                                      # hold -> glide toward the click
                 self._start_fpage(y)
             return
         if lx <= x <= lx + lw and ly <= y < ly + nvis * rh:  # checklist row
@@ -1012,9 +970,8 @@ class GpuEngine:
         btn = next((k for k in ("sortA", "sortZ", "sortcolor", "clearsort", "clear",
                                 "filtercolor", "ok", "cancel")
                     if self._in(lo.get(k), x, y)), None)     # button hover
-        # Color submenu: hovering a ▸ item opens (or switches) it. It stays open while
-        # the cursor is over the flyout itself, and closes the moment it moves onto any
-        # other section of the popup.
+        # Color submenu: hovering a ▸ item opens/switches it; stays open over the
+        # flyout, closes when the cursor moves onto any other section.
         fly, hoverfly = None, None
         if btn in ("sortcolor", "filtercolor") and lo[btn][4]:
             fly = "sort" if btn == "sortcolor" else "filter"
@@ -1042,7 +999,7 @@ class GpuEngine:
 
     def _filter_btn(self, key):
         f = self._filter
-        if key in ("sortcolor", "filtercolor"):  # open the color submenu (also opens on hover)
+        if key in ("sortcolor", "filtercolor"):  # open the color submenu
             f["flyout"] = "sort" if key == "sortcolor" else "filter"
             self.redraw()
         elif key == "sortA":
@@ -1080,7 +1037,7 @@ class GpuEngine:
         self.host.focus()
         self.redraw()
 
-    # --- in-cell editor: a custom TextField drawn on the surface (no Tk widget). ---
+    # --- in-cell editor: a TextField drawn on the surface (no Tk widget). ---
     def begin_edit(self, initial=None):
         if not self.editable:
             return
@@ -1089,12 +1046,12 @@ class GpuEngine:
         if self.model.col_readonly(c):
             return
         choices = self.model.cell_choices(r, c)
-        if choices is not None and r >= self.geom.hdr_rows:  # dropdown cell (data rows only) -> custom Gpu list
+        if choices is not None and r >= self.geom.hdr_rows:  # dropdown cell (data rows only)
             self._open_dropdown(r, c, choices)
             return
         bg, fg = edit_colors(r, self.geom.hdr_rows)      # blend with the cell it edits
         st = self.model.cell_style(r, c)                 # keep the cell's own fg/bold while editing
-        bold = bool(st and st.get("bold"))
+        bold = r < self.geom.hdr_rows or bool(st and st.get("bold"))  # match bold header rows
         if st and st.get("fg"):
             fg = st["fg"]
         text = initial if initial is not None else self.model.cell(r, c)
@@ -1145,14 +1102,14 @@ class GpuEngine:
         self.commit_editor()
         return False
 
-    _TRIPLE_MS = 0.5   # click within this of a word-select, at the same spot, counts as a triple
+    _TRIPLE_MS = 0.5   # click within this of a word-select at same spot = triple
 
     def _is_triple(self, x, y):
         t, px, py = self._dbl
         return (time.monotonic() - t) < self._TRIPLE_MS and abs(x - px) < 4 and abs(y - py) < 4
 
     def _edit_pad(self):
-        return self._fpx * 5 / 13                 # editor's text left pad (matches TextField.draw)
+        return self._fpx * 5 / 13                 # editor text left pad (matches TextField.draw)
 
     def _editor_hit(self, x, y):
         """Text-space x offset if (x,y) is inside the open editor cell, else None."""
@@ -1185,9 +1142,8 @@ class GpuEngine:
         if self._editor:
             self._editor_select_all(x, y)
 
-    # --- custom Gpu dropdown: a list drawn on the surface (no Tk widget), with its
-    # own scrollbar (wheel + thumb drag). Input runs through the grid's Tk bindings
-    # while _dropdown is open. Opens below the cell, flips above near the bottom. ---
+    # --- dropdown list drawn on the surface (no Tk widget), own scrollbar (wheel +
+    # thumb drag). Opens below the cell, flips above near the bottom. ---
     def _open_dropdown(self, r, c, choices):
         opts = list(choices)
         cur = self.model.cell(r, c)
@@ -1229,12 +1185,12 @@ class GpuEngine:
         listh = nvis * rh
         d["top"] = max(0, min(d["top"], n - nvis))
         tw = w - sbw                                       # option-text column width
-        cv.rect(x - 1, y - 1, w + 2, listh + 2, fill="#000000")       # border frame
+        cv.rect(x - 1, y - 1, w + 2, listh + 2, fill="#000000")       # border
         for i in range(nvis):
             oi = d["top"] + i
             if oi >= n:
                 break
-            sel = oi == d["sel"]                          # dark panel, matches the filter popup
+            sel = oi == d["sel"]                          # dark panel, matches filter popup
             cv.rect(x, y + i * rh, tw - 1, rh - 1, fill=T.ACCENT if sel else _PANEL_BG)
             cv.text(x, y + i * rh, tw, rh, d["opts"][oi], "#ffffff" if sel else _PANEL_FG)
         thumb = None
@@ -1252,7 +1208,7 @@ class GpuEngine:
         d = self._dropdown
         lo = d["layout"]
         if lo and lo["thumb"]:                             # scrollbar-thumb hover highlight
-            over = self._in_rect(lo["thumb"], x, y)
+            over = self._in(lo["thumb"], x, y)
             if over != d.get("sbhover"):
                 d["sbhover"] = over
                 self.redraw()
@@ -1326,12 +1282,12 @@ class GpuEngine:
         d = self._dropdown
         r, c, val = d["r"], d["c"], d["opts"][d["sel"]]
         self._close_dropdown(redraw=False)
-        self.model.set_cell(r, c, val)                   # triggers a repaint via model.changed
+        self.model.set_cell(r, c, val)                   # repaints via model.changed
 
     def _close_dropdown(self, redraw=True):
         d = self._dropdown
         if d and d["ta"]:
-            self.host.after_cancel(d["ta"])      # host after_cancel is a no-op on stale ids
+            self.host.after_cancel(d["ta"])      # no-op on stale ids
         self._dropdown = None
         if redraw:
             self.redraw()
@@ -1377,15 +1333,14 @@ class GpuEngine:
             self.redraw()
 
     def set_zoom_fonts(self, z):
-        # No 9px floor and no int rounding here: col_w/row_h scale linearly with z,
-        # so the GPU cell font must too, exactly, or it's a hair too big for the cell
-        # and the text gets ellipsis-trimmed to "…". Keep _fpx a float for the GL text
-        # op, only the Qt/Tk host fonts (used for measuring/editing) need an int.
+        # No 9px floor / int rounding: col_w/row_h scale linearly with z, so the GPU
+        # font must too exactly or text ellipsis-trims. Keep _fpx float; only the
+        # host fonts (measure/edit) need an int.
         self._fpx = max(1.0, self._base_fpx * z)
         self.host.set_zoom_px(max(1, round(self._fpx)))
 
-    # --- normalized input: the host translates native events into these calls, so
-    # the routing (overlays first, then grid) is identical under any toolkit. ---
+    # --- normalized input: host translates native events into these calls; routing
+    # (overlays first, then grid) is identical under any toolkit. ---
     def press(self, x, y, ctrl, shift):
         if self._dropdown:                             # scrollbar drag / pick / close
             self._dropdown_press(x, y); return
@@ -1417,12 +1372,12 @@ class GpuEngine:
 
     def motion(self, x, y):
         self._ptr = (x, y)
-        if self._dropdown:                     # reset: the trigger ▼ left a hand cursor,
-            self._set_cursor(""); self._dropdown_hover(x, y); return   # the popup itself is default
+        if self._dropdown:                     # trigger ▼ left a hand cursor; popup is default
+            self._set_cursor(""); self._dropdown_hover(x, y); return
         if self._filter:
             self._set_cursor(""); self._filter_hover(x, y); return
         if self._sb_hover(x, y):
-            self._set_cursor("")                   # plain arrow over the scrollbars, never resize/hand
+            self._set_cursor("")                   # plain arrow over scrollbars, never resize/hand
             return
         if self._editor:                       # I-beam over the open editor's text box
             self._set_cursor("text" if self._editor_hit(x, y) is not None else "")
@@ -1447,8 +1402,8 @@ class GpuEngine:
             r, c = self._editor["cell"]
             self._editor["tf"].click(x - self.geom.col_x(c) - self._edit_pad(), shift=True)
             self.redraw(); return
-        # At an edge the timer owns the scrolling, so the event itself must NOT also
-        # scroll (follow=False), else the two compound and race the pointer.
+        # At an edge the timer owns scrolling, so the event must not also scroll
+        # (follow=False), else the two compound and race the pointer.
         at_edge = self.ctl.drag_region is not None and self._edge_scroll(x, y) != (0, 0)
         self._in_drag = True
         try:
@@ -1461,22 +1416,19 @@ class GpuEngine:
         else:
             self._stop_autoscroll()
 
-    # --- edge autoscroll during a selection drag: re-arms near-immediately so it
-    # paces on the paint itself (the vsync'd render is the frame clock), and moves at
-    # a VELOCITY (cells/sec) that grows with how far PAST the edge the pointer is held.
-    # dt is the REAL elapsed time between ticks (via perf_counter), so the speed is
-    # correct no matter how long a frame took -- and it's UNCAPPED: push further, go
-    # faster, no ceiling. The only guard is a dt clamp so a stall can't teleport the
-    # view. Fractional accumulation carries the sub-step remainder for smoothness. ---
-    _AUTOSCROLL_MS = 1               # re-arm ASAP: don't add a fixed timer wait on top of the paint
-    _AS_BASE = 16.0                  # cells/sec right at the edge (gentle, precise selection)
-    _AS_GAIN = 42.0                  # + cells/sec per row_h past the edge; no cap -> push harder, faster
+    # --- edge autoscroll during a selection drag: re-arms immediately so it paces on
+    # the paint (vsync'd render = frame clock). Moves at a velocity (cells/sec) that
+    # grows with how far past the edge the pointer is, using real dt (perf_counter) so
+    # speed is frame-time independent and uncapped. A dt clamp stops a stall from
+    # teleporting the view; fractional accumulation carries the sub-step remainder. ---
+    _AUTOSCROLL_MS = 1               # re-arm ASAP, no fixed wait on top of the paint
+    _AS_BASE = 16.0                  # cells/sec at the edge (gentle, precise selection)
+    _AS_GAIN = 42.0                  # + cells/sec per row_h past the edge; no cap
     _AS_DT_CAP = 0.05               # s: clamp elapsed dt so a hitch can't fling the view
 
     def _edge_scroll(self, x, y):
-        """Autoscroll VELOCITY (rows/sec, px/sec) while the pointer sits past a body
-        edge, or (0.0, 0.0) if it's inside. Velocity (not a per-tick step) so speed is
-        timer-rate independent; uncapped so a hard push scrolls fast."""
+        """Autoscroll velocity (rows/sec, px/sec) while the pointer is past a body edge,
+        else (0.0, 0.0). Velocity not per-tick step, so speed is timer-rate independent."""
         g = self.geom
         rh = max(1, g.row_h)
         def vel(past):                                  # past = px beyond the body edge
@@ -1488,14 +1440,14 @@ class GpuEngine:
             vr = -vel(g.header_h - y)
         vpx = 0.0
         if x > g.w - rh:                                # right band / past the right edge
-            vpx = vel(x - g.w) * rh                     # px/sec, same cells/sec feel as vertical
+            vpx = vel(x - g.w) * rh                     # px/sec, same feel as vertical
         elif x < g.gutter_w:                            # over the gutter / past the left edge
             vpx = -vel(g.gutter_w - x) * rh
         return vr, vpx
 
     def _start_autoscroll(self):
         if self._autoscroll_after is None:
-            self._autoscroll_acc = [0.0, 0.0]           # fresh remainder so it doesn't lurch on start
+            self._autoscroll_acc = [0.0, 0.0]           # fresh remainder, no lurch on start
             self._autoscroll_t = time.perf_counter()    # dt baseline for the first tick
             self._autoscroll_after = self.host.after(self._AUTOSCROLL_MS, self._autoscroll_tick)
 
@@ -1513,30 +1465,30 @@ class GpuEngine:
         if (vr, vpx) == (0.0, 0.0):                      # pointer back inside: stop
             return
         now = time.perf_counter()
-        dt = min(self._AS_DT_CAP, now - self._autoscroll_t)   # real elapsed -> speed is timer-independent
+        dt = min(self._AS_DT_CAP, now - self._autoscroll_t)   # real elapsed -> timer-independent speed
         self._autoscroll_t = now
         g = self.geom
-        vpy = vr * g.row_h                              # rows/sec -> px/sec so vertical glides like horizontal
+        vpy = vr * g.row_h                              # rows/sec -> px/sec, glides like horizontal
         apy, apx = self._autoscroll_acc
         apy += vpy * dt; apx += vpx * dt
-        dpy, dpx = int(apy), int(apx)                   # whole PX steps this tick; keep the remainder
+        dpy, dpx = int(apy), int(apx)                   # whole-px steps this tick; keep the remainder
         self._autoscroll_acc = [apy - dpy, apx - dpx]
         before = (g.scroll_y, g.scroll_x)
         if dpy:
-            g.scroll_y = max(0, g.scroll_y + dpy)       # sub-row pixel scroll, not whole-row lurch
+            g.scroll_y = max(0, g.scroll_y + dpy)       # sub-row pixel scroll, no whole-row lurch
         if dpx:
             g.scroll_x = max(0, g.scroll_x + dpx)
         g.clamp(self.model.nrows())
         applied = (g.scroll_y, g.scroll_x) != before
-        if (dpy or dpx) and not applied:                # tried to move but clamped at the data edge: stop
+        if (dpy or dpx) and not applied:                # clamped at the data edge: stop
             return
         if applied:
-            self.ctl.on_drag(x, y, follow=False)         # extend the selection into the revealed cells
+            self.ctl.on_drag(x, y, follow=False)         # extend selection into revealed cells
         self._autoscroll_after = self.host.after(self._AUTOSCROLL_MS, self._autoscroll_tick)
 
     def wheel(self, notches):                          # notches > 0 = scroll up (may be fractional)
         if self._dropdown or self._filter:
-            step = int(notches) or (1 if notches > 0 else -1)   # discrete list: non-zero int rows
+            step = int(notches) or (1 if notches > 0 else -1)   # discrete list: non-zero int
             (self._dropdown_scroll if self._dropdown else self._filter_scroll)(-step)
             return
         self._scroll_smooth(dy=-notches * self._WHEEL_ROWS * self.geom.row_h)
@@ -1548,37 +1500,31 @@ class GpuEngine:
         if self._editor and self._editor_double(x, y):  # dbl-click in the open editor = select word
             return
         if self._overlay_open() or x >= self.geom.w or y >= self.geom.h:
-            self.press(x, y, False, False); return     # modal / scrollbar: don't fall through to a cell edit
+            self.press(x, y, False, False); return     # modal / scrollbar: no cell-edit fall-through
         self.ctl.on_double(x, y)
 
     def leave(self):            self.ctl.set_corner_hover(False)
     def toggle_fullscreen(self): self.host.fullscreen_toggle()
 
     # --- smooth zoom (Ctrl+wheel) -----------------------------------------
-    # TIME-based ease-out, not a per-frame fraction: SwapBuffers is vsync-blocked, so
-    # the timer really fires at the refresh rate (~60 Hz), not _ZOOM_MS's 165 Hz. A
-    # per-frame fraction would then take ~25 refreshes (~420 ms) to settle on a 60 Hz
-    # panel and feel sluggish. Decaying by REAL elapsed dt makes the glide a constant
-    # ~130 ms wall-clock at any refresh -- smooth AND responsive. (Mirrors the
-    # perf_counter real-dt the autoscroll path uses.)
+    # Time-based ease-out, not a per-frame fraction: SwapBuffers is vsync-blocked so
+    # the timer fires at refresh rate (~60 Hz), not _ZOOM_MS's 165 Hz; a per-frame
+    # fraction would settle too slowly on a 60 Hz panel. Decaying by real dt makes the
+    # glide a constant ~130 ms at any refresh.
     _ZOOM_TAU = 0.045        # ease time constant (s): ~95% of the gap closed in ~3*TAU
-    _ZOOM_MS = 1             # animation timer period: tight so the render cadence is vsync-bound,
-                             # not gated by the timer waiting between frames (ease is time-based)
+    _ZOOM_MS = 1             # timer period: tight so render cadence is vsync-bound, not timer-gated
     _ZOOM_SNAP = 0.004       # within this of target -> land exactly and stop
 
     def zoom(self, factor):
-        # Accumulate onto the live target (successive notches compound) instead of
-        # snapping ctl._zoom, so a burst glides to the final level in one motion.
+        # Accumulate onto the live target so a burst of notches glides to the final
+        # level in one motion.
         base = self._zoom_to if self._zoom_to is not None else self.ctl._zoom
         self._zoom_to = max(0.4, min(4.0, base * factor))
         if self._zoom_after is None:
-            # Each glide frame allocates short-lived objects (display-list tuples, the
-            # canvas buffer); a gen-0 collection landing mid-glide is a ~10 ms pause that
-            # drops a vblank and shows as a stutter. Freeze GC for the ~130 ms glide --
-            # the deferred garbage is collected once, at settle. (No-op if already off.)
+            # Glide frames allocate short-lived objects; a gen-0 collection mid-glide
+            # is a ~10 ms stutter. Freeze GC for the glide, sweep once at settle.
             gc.disable()
             self._zoom_t = time.perf_counter()          # glide clock start (real-dt ease)
-            self._zoom_frames = []                       # fps probe: fresh glide
             self._zoom_after = self.host.after(self._ZOOM_MS, self._zoom_anim_tick)
 
     def _zoom_anim_tick(self):
@@ -1592,16 +1538,7 @@ class GpuEngine:
         if abs(gap) <= self._ZOOM_SNAP:
             self.ctl.zoom_to(self._zoom_to)
             self._zoom_to = None
-            gc.enable(); gc.collect()          # glide done: resume GC, sweep the deferred garbage now
-            if self._zoomfps and len(self._zoom_frames) > 1:
-                ts = [f[0] for f in self._zoom_frames]
-                span = ts[-1] - ts[0]
-                n = len(self._zoom_frames)
-                build = sum(f[1] for f in self._zoom_frames) / n
-                upload = sum(f[2] for f in self._zoom_frames) / n
-                print("zoom glide: %d frames in %.0f ms = %.0f fps  |  avg build %.2f ms  "
-                      "gpu_render+vsync %.2f ms" %
-                      (n, span * 1000, (n - 1) / span if span else 0, build, upload))
+            gc.enable(); gc.collect()          # glide done: resume GC, sweep deferred garbage
             return
         frac = 1.0 - math.exp(-dt / self._ZOOM_TAU)      # real-dt exponential decay (frame-rate independent)
         self.ctl.zoom_to(cur + gap * frac)
@@ -1623,7 +1560,7 @@ class GpuEngine:
         return bool(self.ctl.on_key(k, shift, ctrl, char))
 
     def context(self, x, y, root):
-        if self._overlay_open():                       # modal: no grid menu behind the overlay
+        if self._overlay_open():                       # modal: no grid menu behind overlay
             return
         self.host.focus()
         self.ctl.context_select(x, y)
@@ -1645,15 +1582,15 @@ class GpuEngine:
         self.redraw()
 
     # --- smooth (inertial) wheel scroll -----------------------------------
-    # Tuned for "slower top speed, but glassy": a notch nudges the target a couple
-    # rows, easing eats a fraction of the gap per ~90fps frame, and both the target
-    # lead and the per-frame move are capped so a fast spin can't fling or lag.
-    _WHEEL_ROWS = 2.0        # rows per wheel notch added to the vertical target (was 3, hard-snap)
+    # A notch nudges the target a couple rows, easing eats a fraction of the gap per
+    # ~90fps frame; target lead and per-frame move are capped so a fast spin can't
+    # fling or lag.
+    _WHEEL_ROWS = 2.0        # rows per notch added to the vertical target
     _HWHEEL_PX = 48.0        # px per notch for shift-wheel / trackpad-x
-    _SCROLL_EASE = 0.30      # fraction of the remaining gap consumed each animation frame
+    _SCROLL_EASE = 0.30      # fraction of the remaining gap consumed each frame
     _SCROLL_MS = 11          # animation timer period (~90 Hz)
     _SCROLL_SNAP = 0.5       # px: within this of target -> land exactly and stop
-    _SCROLL_MAX_FRAC = 0.22  # per-frame move cap, as a fraction of the viewport (caps top speed)
+    _SCROLL_MAX_FRAC = 0.22  # per-frame move cap, fraction of viewport (caps top speed)
     _SCROLL_LEAD_FRAC = 1.1  # target may lead the live position by at most this * viewport
 
     def _scroll_px(self, dx):                          # shift-wheel / trackpad horizontal
@@ -1665,10 +1602,9 @@ class GpuEngine:
         g = self.geom
         g.clamp(self.model.nrows())
         live = (g.scroll_x, g.scroll_y)
-        # (Re)seed from the live position on the first notch or after any non-wheel
-        # scroll moved the view out from under us, so the glide starts where we are.
-        # Stamp _scroll_last here too, so successive notches in the same burst ACCUMULATE
-        # onto the target instead of each re-seeding back to the (unmoved) live position.
+        # (Re)seed from the live position on the first notch or after a non-wheel
+        # scroll moved the view, so the glide starts where we are. Stamp _scroll_last
+        # so notches in a burst accumulate onto the target instead of re-seeding.
         if self._scroll_to is None or self._scroll_last != live:
             self._scroll_pos = [float(g.scroll_x), float(g.scroll_y)]
             self._scroll_to = [float(g.scroll_x), float(g.scroll_y)]
@@ -1678,8 +1614,8 @@ class GpuEngine:
         t = self._scroll_to
         t[0] = min(max(0.0, t[0] + dx), g.max_scroll_x())
         t[1] = min(max(0.0, t[1] + dy), g.max_scroll_y(self.model.nrows()))
-        # cap how far the target can run ahead of the live position: kills the "keeps
-        # scrolling long after I stopped" backlog that reads as lag on a fast spin.
+        # cap how far the target runs ahead of live: kills the "keeps scrolling after
+        # I stopped" backlog that reads as lag on a fast spin.
         lead_x, lead_y = self._SCROLL_LEAD_FRAC * view_w, self._SCROLL_LEAD_FRAC * view_h
         t[0] = min(max(t[0], g.scroll_x - lead_x), g.scroll_x + lead_x)
         t[1] = min(max(t[1], g.scroll_y - lead_y), g.scroll_y + lead_y)
@@ -1711,18 +1647,14 @@ class GpuEngine:
         g.scroll_y = max(0, int(round(pos[1])))
         g.clamp(self.model.nrows())
         self._scroll_last = (g.scroll_x, g.scroll_y)
-        self.redraw()                               # one frame per tick (not coalesced) for smoothness
+        self.redraw()                               # one frame per tick (not coalesced), smoother
         if dx_done and dy_done:
             self._scroll_to = self._scroll_pos = None
             return
         self._scroll_after = self.host.after(self._SCROLL_MS, self._scroll_anim_tick)
 
-    # --- custom scrollbars: drawn in the reserved right/bottom strips, thumb
-    # brightens to the accent on hover/drag (grid vertical + horizontal). ---
-    @staticmethod
-    def _in_rect(r, x, y):
-        return r is not None and r[0] <= x <= r[0] + r[2] and r[1] <= y <= r[1] + r[3]
-
+    # --- scrollbars: drawn in the reserved right/bottom strips, thumb brightens to
+    # accent on hover/drag. ---
     def _sb_arrow(self, cv, rect, d):
         """A scrollbar end button: a filled triangle pointing in direction `d`."""
         bx, by, w, h = rect
@@ -1735,8 +1667,8 @@ class GpuEngine:
     def _draw_scrollbars(self, cv, sw, sh):
         g, sbw = self.geom, self._sbw
         g.used_rows, g.used_cols = self.model.used_extent()   # trim blank overscroll from the thumb
-        # vertical bar in PIXELS (matches the sub-row scroll_y) so the thumb glides.
-        # Track is inset by one button (sbw) at each end to make room for the arrows.
+        # vertical bar in px (matches sub-row scroll_y) so the thumb glides; track
+        # inset by one button (sbw) at each end for the arrows.
         n, view = g.row_extent(self.model.nrows()) * g.row_h, g.full_rows() * g.row_h
         cv.rect(g.w, 0, sbw, g.h, fill=_SB_TRACK)                     # vertical track
         vm = _sb_metrics(sbw, g.h - 2 * sbw, n, view, g.scroll_y)
@@ -1762,8 +1694,8 @@ class GpuEngine:
         self._hsb["left"], self._hsb["right"] = (0, g.h, sbw, sbw), (g.w - sbw, g.h, sbw, sbw)
         self._sb_arrow(cv, self._hsb["left"], "left"); self._sb_arrow(cv, self._hsb["right"], "right")
         cv.rect(g.w, g.h, sbw, sbw, fill=_SB_TRACK)                   # corner
-        # A thumb may have slid under a stationary cursor (scrolling elsewhere moves it).
-        # Re-test hover against the new thumb rects; _sb_hover redraws only if a flag flips.
+        # A thumb may have slid under a stationary cursor; re-test hover against the
+        # new rects (_sb_hover redraws only if a flag flips).
         if self._ptr and not (self._vsb["drag"] or self._hsb["drag"]):
             self._sb_hover(*self._ptr)
 
@@ -1772,21 +1704,21 @@ class GpuEngine:
         g = self.geom
         vt, ht = self._vsb["thumb"], self._hsb["thumb"]
         if x >= g.w and y < g.h:                                      # vertical strip
-            if self._in_rect(self._vsb.get("up"), x, y):
+            if self._in(self._vsb.get("up"), x, y):
                 self._start_sbstep("v", -1)
-            elif self._in_rect(self._vsb.get("down"), x, y):
+            elif self._in(self._vsb.get("down"), x, y):
                 self._start_sbstep("v", 1)
-            elif self._in_rect(vt, x, y):
+            elif self._in(vt, x, y):
                 self._vsb.update(drag=True, grab=y - vt[1])
-            elif vt:                                                  # hold -> keep gliding toward the click
+            elif vt:                                                  # hold -> glide toward the click
                 self._start_sbpage("v", y)
             return True
         if y >= g.h and x < g.w:                                      # horizontal strip
-            if self._in_rect(self._hsb.get("left"), x, y):
+            if self._in(self._hsb.get("left"), x, y):
                 self._start_sbstep("h", -1)
-            elif self._in_rect(self._hsb.get("right"), x, y):
+            elif self._in(self._hsb.get("right"), x, y):
                 self._start_sbstep("h", 1)
-            elif self._in_rect(ht, x, y):
+            elif self._in(ht, x, y):
                 self._hsb.update(drag=True, grab=x - ht[0])
             elif ht:
                 self._start_sbpage("h", x)
@@ -1794,10 +1726,9 @@ class GpuEngine:
         return x >= g.w or y >= g.h                                   # corner -> swallow
 
     # Held scrollbar actions share one repeat timer: "page" eases toward the pointer
-    # and stops there (Excel track-click); "step" nudges a fixed amount per tick while
-    # an end arrow is held. The page ease never overshoots, so it lands without bounce.
-    # "page" reuses the wheel glide's constants (_SCROLL_MS/_MAX_FRAC/_SNAP) and float
-    # accumulator so track-paging is as smooth as the wheel, not a choppy integer crawl.
+    # and stops (Excel track-click); "step" nudges a fixed amount per tick while an
+    # arrow is held. "page" reuses the wheel glide's constants and float accumulator
+    # so track-paging is as smooth as the wheel.
     _SBPAGE_MS = 16                                                  # filter-list page-ease cadence
     _ARROW_MS = 40                                                   # arrow-repeat cadence
     _ARROW_PX = 48                                                   # horizontal arrow step (px)
@@ -1864,9 +1795,9 @@ class GpuEngine:
         g, (kind, axis, val) = self.geom, self._sbpage
         view = g.full_rows() * g.row_h if axis == "v" else (g.w - g.freeze_x())
         cur = g.scroll_y if axis == "v" else g.scroll_x
-        if kind == "page":                               # float glide toward the held pointer (== wheel)
+        if kind == "page":                               # float glide toward the held pointer
             if self._sbpage_pos is None or abs(self._sbpage_pos - cur) > 1:
-                self._sbpage_pos = float(cur)            # (re)seed if the view moved out from under us
+                self._sbpage_pos = float(cur)            # (re)seed if the view moved
             gap = self._sbpage_target(axis, val) - self._sbpage_pos
             if abs(gap) <= self._SCROLL_SNAP:            # land exactly on the pointer and stop
                 newv = self._sbpage_target(axis, val)
@@ -1882,7 +1813,7 @@ class GpuEngine:
         else:
             g.scroll_x = newv
         g.clamp(self.model.nrows())
-        self.redraw()                                # paint this tick directly, like the wheel glide
+        self.redraw()                                # paint this tick directly, like wheel glide
         if self._sbpage is None:                     # page glide landed -> no more ticks
             return
         self._sbpage_after = self.host.after(self._SCROLL_MS if kind == "page" else self._ARROW_MS,
@@ -1890,7 +1821,7 @@ class GpuEngine:
 
     def _sb_drag(self, x, y):
         g, sbw = self.geom, self._sbw
-        if self._sbpage and self._sbpage[0] == "page":   # dragging along the track re-aims the glide
+        if self._sbpage and self._sbpage[0] == "page":   # drag along track re-aims the glide
             self._sbpage = ("page", self._sbpage[1], y if self._sbpage[1] == "v" else x)
             return True
         if self._vsb["drag"] and self._vsb["thumb"]:
@@ -1909,8 +1840,8 @@ class GpuEngine:
 
     def _sb_hover(self, x, y):
         """Update thumb hover flags. Return True if the pointer is over a scrollbar."""
-        vh = self._in_rect(self._vsb["thumb"], x, y)
-        hh = self._in_rect(self._hsb["thumb"], x, y)
+        vh = self._in(self._vsb["thumb"], x, y)
+        hh = self._in(self._hsb["thumb"], x, y)
         if vh != self._vsb["hover"] or hh != self._hsb["hover"]:
             self._vsb["hover"], self._hsb["hover"] = vh, hh
             self.redraw()
@@ -1929,7 +1860,7 @@ class GpuEngine:
             fn()
 
     def close(self):
-        if self._zoom_to is not None:      # closed mid-glide: don't leave GC frozen off
+        if self._zoom_to is not None:      # closed mid-glide: don't leave GC frozen
             gc.enable()
         if self._surf is not None:
             self._lib.gpu_detach(self._surf)
@@ -1943,8 +1874,8 @@ def _selftest():
     from ..core.render import blit
     from types import SimpleNamespace
 
-    # Autoscroll velocity curve (pure: reads only self.geom). Zero inside the body,
-    # accelerates the further past an edge, capped, and correctly signed.
+    # Autoscroll velocity curve (pure: reads only self.geom). Zero inside, faster
+    # past an edge, correctly signed.
     stub = SimpleNamespace(geom=SimpleNamespace(row_h=20, h=400, header_h=40, w=600, gutter_w=56),
                            _AS_BASE=GpuEngine._AS_BASE, _AS_GAIN=GpuEngine._AS_GAIN)
     assert GpuEngine._edge_scroll(stub, 300, 200) == (0.0, 0.0)          # inside -> no scroll
@@ -1966,16 +1897,14 @@ def _selftest():
     got = lib.gpu_probe_pixel(bytes(cv.buf), len(cv.buf), 64, 48, 10, 10)
     assert got == 0xFF3366CC, "rect color: got %08X want FF3366CC" % got
 
-    # A2: filled polygon -> probe the interior. Exercises the GL stencil concave-fill
-    # path (a 'VERIFY' spot).
+    # A2: filled polygon -> probe the interior (GL stencil concave-fill path).
     cv = GpuCanvas(13)
     cv.poly([(10, 10), (50, 10), (30, 50)], "#22cc44")     # triangle
     got = lib.gpu_probe_pixel(bytes(cv.buf), len(cv.buf), 64, 64, 30, 25)   # strictly inside
     assert got == 0xFF22CC44, "poly fill: got %08X want FF22CC44" % got
 
-    # A3: text path. Solid block glyph (U+2588) white on black -- a point near the
-    # cell center must read back near-white. Exercises the GL glyph atlas (pack +
-    # batched textured quads). Scan a few points so the check doesn't hinge on exact
+    # A3: text path. Solid block glyph (U+2588) white on black -> a point near the
+    # cell center must read near-white. Scans a few points to not hinge on exact
     # glyph metrics.
     def _near_white(buf, w, h, px, py):
         v = lib.gpu_probe_pixel(buf, len(buf), w, h, px, py)
@@ -1987,15 +1916,14 @@ def _selftest():
     assert any(_near_white(tb, 64, 64, px, py) for px in (26, 32, 38) for py in (26, 32, 38)), \
         "text glyph did not render near-white near center"
 
-    # A4: glyph-atlas overflow recovery (the GL zoom-in "text vanishes" bug). Force the
-    # atlas to overflow within ONE frame -- many large distinct glyphs -- then draw a
-    # solid block LAST. It lands in the freshly-rebuilt atlas, so it must still render;
-    # if overflow silently dropped glyphs, this probes black.
+    # A4: glyph-atlas overflow recovery (the "text vanishes" zoom bug). Overflow the
+    # atlas in one frame (many large distinct glyphs), then draw a block last; it
+    # lands in the rebuilt atlas and must still render, else this probes black.
     cv = GpuCanvas(200)
     for k in range(80):
         cv.text(0, 0, 40, 40, chr(0x21 + k), "#ffffff")     # 80 big distinct glyphs -> overflow
-    cv.rect(0, 0, 320, 320, fill="#000000")                 # cover the fillers: probe tests the block alone
-    cv.text(40, 40, 240, 240, "█", "#ffffff", center=True)  # wide cell (no ellipsis-trim); drawn last
+    cv.rect(0, 0, 320, 320, fill="#000000")                 # cover fillers: probe tests the block alone
+    cv.text(40, 40, 240, 240, "█", "#ffffff", center=True)  # wide cell (no ellipsis-trim), drawn last
     ob = bytes(cv.buf)
     assert any(_near_white(ob, 320, 320, px, py) for px in (150, 160, 170) for py in (150, 160, 170)), \
         "glyph vanished after atlas overflow/rebuild"

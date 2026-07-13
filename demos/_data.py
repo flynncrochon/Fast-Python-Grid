@@ -76,14 +76,14 @@ def stream_styles(win, chunk=4000):
     view.after(0, lambda: step(m.header_rows))
 
 
-# Stress dropdown: 1000 options, most far wider than any column -- exercises the
+# Stress dropdown: 1000 options, most far wider than any column: exercises the
 # popup-widening (list grows to the text) and large option lists. The whole column
 # shares one interned tuple, so this costs one list, not one copy per row.
 _LONG = ("Comprehensive multi-word option label that is far wider than the column",
          "Another lengthy descriptive choice overflowing the narrow cell by a lot",
          "Short",
          "Medium-length option text")
-LONG_OPTS = ["%04d — %s" % (i, _LONG[i % len(_LONG)]) for i in range(1000)]
+LONG_OPTS = ["%04d - %s" % (i, _LONG[i % len(_LONG)]) for i in range(1000)]
 
 
 def lines_demo(model):
@@ -98,7 +98,7 @@ def lines_demo(model):
 
 def readonly_demo(model):
     """Lock the Ticker + Price columns: still selectable and copyable, but edits,
-    paste and delete are rejected (try double-clicking a Ticker cell -- no editor)."""
+    paste and delete are rejected (try double-clicking a Ticker cell, no editor)."""
     model.set_readonly_col(HEADERS.index("Ticker"))
     model.set_readonly_col(HEADERS.index("Price"))
 

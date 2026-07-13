@@ -1,4 +1,4 @@
-"""OpenGL/GPU demo under a Qt (PySide6) host -- same engine as demo_gpu_tk.py.
+"""OpenGL/GPU demo under a Qt (PySide6) host: same engine as demo_gpu_tk.py.
 
     python demos/demo_gpu_qt.py                 # 100k rows on the GPU surface
     python demos/demo_gpu_qt.py --rows 500000   # stress it
@@ -6,7 +6,7 @@
 Tabs across the top open separate whole sheets, each with different options, so you
 can compare them live. The "Uncapped" tabs scroll past the last row/column into
 empty space (spreadsheet-style): the scrollbar thumb shrinks as you overscroll and snaps
-back when you scroll in again -- unless you typed out there, which grows the sheet.
+back when you scroll in again, unless you typed out there, which grows the sheet.
 
 Proves the toolkit-neutral GpuEngine runs unchanged under Qt. Build the DLL once:
     python -m fastpygrid.core.gpu --build
@@ -51,7 +51,7 @@ def main():
     from fastpygrid.core.gpu import _load_lib, _enable_dpi_awareness, _screen_scale
     lib = _load_lib()
     if lib is None:
-        raise SystemExit("Gpu surface unavailable -- build it with "
+        raise SystemExit("Gpu surface unavailable, build it with "
                          "`python -m fastpygrid.core.gpu --build`.")
     app = QtWidgets.QApplication.instance()
     if app is None:

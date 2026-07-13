@@ -1,21 +1,17 @@
 """Qt (PySide6) host for the toolkit-neutral GpuEngine (fastpygrid.core.gpu).
 
-Same shape as tk.py: the engine owns all rendering, overlays, scrollbars and
-input LOGIC and imports NO GUI toolkit. This file is the thin Qt adapter -- it
-owns the window, a native surface widget (the Gpu child HWND parents to its
-winId), fonts, event translation, clipboard and context menu, and implements the
-~dozen host-adapter methods the engine calls. The engine is reused UNCHANGED.
-
-All chrome is custom Gpu-drawn, so the widget IS the surface -- no sibling Qt
-widgets. Rendered with OpenGL (glsurface); raises if the DLL/GPU surface can't build.
+Same shape as tk.py: the thin Qt adapter owns the window, a native surface widget
+(the Gpu child HWND parents to its winId), fonts, event translation, clipboard and
+context menu, and implements the host-adapter methods the engine calls. All chrome
+is Gpu-drawn, so the widget IS the surface: no sibling Qt widgets.
 """
 import os
 
-# The engine works in PHYSICAL pixels (HWND is physical, Gpu RT forced to 96 DPI),
-# so Qt must not scale -- else it reports logical px and the surface renders into a
-# 1/dpr corner with every mouse coord offset. AA_DisableHighDpiScaling is a no-op in
-# Qt6. These env vars are the real switch and must be set before QApplication.
-# ponytail: assumes dpr==1. Embedding in a QApplication that forces scaling => coords
+# Engine works in PHYSICAL pixels (Gpu RT forced to 96 DPI), so Qt must not scale --
+# else it reports logical px and renders into a 1/dpr corner with mouse coords off.
+# AA_DisableHighDpiScaling is a no-op in Qt6; these env vars are the real switch and
+# must be set before QApplication.
+# assumes dpr==1. Embedding in a QApplication that forces scaling => coords
 # offset. Set QT_ENABLE_HIGHDPI_SCALING=0 in that app's env too.
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
 os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
@@ -39,8 +35,8 @@ _KEYS = {
 
 
 def _keysym(e):
-    """Tk-style keysym for a QKeyEvent: named specials, else the letter (so the
-    engine's Ctrl+A/C/V/X and single-char checks work), else the char itself."""
+    """Tk-style keysym for a QKeyEvent: named specials, else the letter (for the
+    engine's Ctrl+A/C/V/X + single-char checks), else the char itself."""
     k = e.key()
     if k in _KEYS:
         return _KEYS[k]
@@ -51,8 +47,8 @@ def _keysym(e):
 
 
 class GpuQtGrid(QtWidgets.QWidget):
-    """Thin Qt host for GpuEngine. A native, self-painted surface widget: the Gpu
-    child HWND parents to winId() and does all drawing. Qt just forwards events."""
+    """Thin Qt host. Native self-painted surface: the Gpu child HWND parents to
+    winId() and does all drawing; Qt just forwards events."""
 
     def __init__(self, parent, model, editable=True, frozen=0, col_w=None, scale=1.0, lib=None,
                  uncap_rows=False, uncap_cols=False, filters=True):
@@ -120,9 +116,9 @@ class GpuQtGrid(QtWidgets.QWidget):
     def wheelEvent(self, e):
         dx, dy = e.angleDelta().x(), e.angleDelta().y()
         m = e.modifiers()
-        # Float division, not // : high-res wheels/trackpads deliver sub-120 deltas, and
-        # floor division truncates them asymmetrically (up -> 0, down -> -1), so up feels
-        # dead while down over-scrolls. Fractional notches scroll proportionally instead.
+        # Float division, not // : high-res wheels deliver sub-120 deltas; floor
+        # division truncates asymmetrically (up->0, down->-1) so up feels dead. Float
+        # scrolls fractional notches proportionally.
         if m & QtCore.Qt.ControlModifier:
             self.engine.zoom(1.1 if dy > 0 else 1 / 1.1)
         elif m & QtCore.Qt.ShiftModifier:
@@ -197,7 +193,12 @@ class GpuQtGrid(QtWidgets.QWidget):
 
     def context_menu(self, root, actions):
         m = QtWidgets.QMenu(self)
-        m.setStyleSheet(f"QMenu::item:selected {{ background: {T.SEL_RING}; color: white; }}")
+        # no icons/checks on any action, so kill QMenu's left icon gutter
+        # that otherwise indents every label vs the tight Tk menu.
+        m.setStyleSheet(
+            "QMenu::item { padding: 4px 24px 4px 12px; }"
+            f"QMenu::item:selected {{ background: {T.SEL_RING}; color: white; }}"
+        )
         for label, cmd, enabled in actions:
             a = m.addAction(label); a.setEnabled(enabled); a.triggered.connect(cmd)
         m.exec(QtCore.QPoint(int(root[0]), int(root[1])))
@@ -221,13 +222,13 @@ class GpuQtGrid(QtWidgets.QWidget):
 def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
                col_w=None, title="fastpygrid (gpu-qt)", uncap_rows=False, uncap_cols=False,
                filters=True):
-    """One-call sheet under a Qt host, rendered with the OpenGL 1.1 backend
-    (cross-platform). Creates a QApplication if none exists. Returns the window (with
-    .model, .grid_view, .mainloop()). Raises if the surface lib isn't built."""
+    """One-call sheet under a Qt host (OpenGL 1.1 backend). Creates a QApplication if
+    none exists. Returns the window (.model, .grid_view, .mainloop()). Raises if the
+    surface lib isn't built."""
     lib = _load_lib()
     if lib is None:
         raise RuntimeError(
-            "OpenGL surface unavailable -- build it with `python -m fastpygrid.core.gpu --build`.")
+            "OpenGL surface unavailable, build it with `python -m fastpygrid.core.gpu --build`.")
     app = QtWidgets.QApplication.instance()
     if app is None:
         _enable_dpi_awareness()          # process DPI-aware, Qt scaling off via env (top of file)

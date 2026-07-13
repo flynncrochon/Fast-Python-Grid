@@ -1,10 +1,9 @@
 """Tk host for the toolkit-neutral GpuEngine (fastpygrid.core.gpu).
 
-The engine owns all rendering, overlays, scrollbars and input LOGIC and imports
-NO GUI toolkit. This file is the thin Tk adapter: it owns the window, the surface
-frame, the fonts, event translation, clipboard and the context menu, and it
-implements the ~dozen host-adapter methods the engine calls. A Qt host (qt.py)
-is the same shape over QWidget -- the engine is reused unchanged.
+The engine owns all rendering/input LOGIC and imports no GUI toolkit. This thin Tk
+adapter owns the window, surface frame, fonts, event translation, clipboard and
+context menu, and implements the ~dozen host-adapter methods the engine calls.
+qt.py is the same shape over QWidget.
 """
 import ctypes
 import sys
@@ -17,8 +16,8 @@ from ..core.gpu import GpuEngine, _load_lib, _enable_dpi_awareness, _screen_scal
 
 
 def _win_clip_html():
-    """Windows CF_HTML clipboard flavor (UTF-8), or "" (Tk can't fetch it itself).
-    This is the table format Jira/browsers/spreadsheets put alongside plain text."""
+    """Windows CF_HTML clipboard flavor (UTF-8), or "", Tk can't fetch it. The
+    table format browsers/spreadsheets put alongside plain text."""
     if sys.platform != "win32":
         return ""
     try:
@@ -51,9 +50,8 @@ def _win_clip_html():
 
 
 class GpuGrid(tk.Frame):
-    """Thin Tk host for GpuEngine: owns the surface frame + fonts, implements the
-    host-adapter API the engine calls, and translates Tk events into the engine's
-    normalized input methods."""
+    """Thin Tk host: owns the surface frame + fonts, implements the host-adapter API,
+    translates Tk events into the engine's normalized input."""
 
     def __init__(self, master, model, editable=True, frozen=0, col_w=None, scale=1.0, lib=None,
                  uncap_rows=False, uncap_cols=False, filters=True):
@@ -61,7 +59,7 @@ class GpuGrid(tk.Frame):
         self._fpx = max(9, round(13 * scale))
         self.font = tkfont.Font(family=UI_FONT, size=-self._fpx)
         self.hfont = tkfont.Font(family=UI_FONT, size=-self._fpx, weight="bold")
-        self.surface = tk.Frame(self, bg=T.BG)      # native Gpu child HWND attaches here
+        self.surface = tk.Frame(self, bg=T.LETTER_BG)  # native Gpu child HWND attaches here
         self.surface.grid(row=0, column=0, sticky="nsew")
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -149,8 +147,8 @@ class GpuGrid(tk.Frame):
 def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
                col_w=None, title="fastpygrid (gpu)", uncap_rows=False, uncap_cols=False,
                filters=True):
-    """One-call sheet under a Tk host, rendered with the OpenGL 1.1 backend
-    (cross-platform). Raises if the surface lib isn't built."""
+    """One-call sheet under a Tk host (OpenGL 1.1 backend). Raises if the surface
+    lib isn't built."""
     lib = _load_lib()
     if lib is None:
         raise RuntimeError(

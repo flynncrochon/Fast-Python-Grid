@@ -8,8 +8,8 @@
 // coverage bitmap (GDI ClearType on Windows, FreeType LCD on Linux).
 //
 // TEXT: GL 1.1 has no text primitive. Each codepoint is rasterized on demand into a
-// GL_RGB atlas holding per-subpixel (R,G,B) coverage -- ClearType/LCD, ~3x horizontal
-// resolution like Excel -- and composited in two blend passes per run so each subpixel
+// GL_RGB atlas holding per-subpixel (R,G,B) coverage (ClearType/LCD, ~3x horizontal
+// resolution like Excel) and composited in two blend passes per run so each subpixel
 // blends independently: out = text*cov + dst*(1-cov). Cached per (size, bold, codepoint).
 //
 // Wire format (little-endian, colors 0xRRGGBB, -1 = none):
@@ -123,13 +123,13 @@ static void rgb(int32_t c, GLfloat* out) {
 }
 
 // Subpixel (ClearType/LCD) text: each glyph is rasterized to *per-channel* RGB
-// coverage -- R/G/B lit independently -- giving ~3x horizontal resolution, the same
+// coverage (R/G/B lit independently) giving ~3x horizontal resolution, the same
 // thing Excel does. The atlas is GL_RGB and text draws in two blend passes (flush()).
 //
 // The GDI/FreeType white-on-black mask already has the renderer's gamma baked in, so
 // we composite it as-is: an offscreen readback of the two-pass GL result is pixel-for-
 // pixel identical to native GDI ClearType black-on-white. (An extra gamma pass over the
-// mask only lightens/fringes it away from that reference -- verified, don't add one.)
+// mask only lightens/fringes it away from that reference; verified, don't add one.)
 
 // --- little-endian buffer readers (advance the cursor) ---
 static float    rf(const uint8_t* p, size_t& i) { float v;    memcpy(&v, p + i, 4); i += 4; return v; }
@@ -361,7 +361,7 @@ static bool plat_raster(Ctx&, GFont& f, uint32_t cp,
 // Platform-neutral GL 1.1 drawing
 // ---------------------------------------------------------------------------
 // The px size to RASTERIZE a glyph at for a target zoom size `sz`. Settled: the exact
-// int px, for crisp 1:1 ClearType. Mid-glide (c.anim): snap to a power of 2 -- the ~6
+// int px, for crisp 1:1 ClearType. Mid-glide (c.anim): snap to a power of 2; the ~6
 // snapped sizes (4..128) cover the whole zoom range, so they warm the atlas once and
 // every later glide frame is a pure cache hit (no per-size GDI raster, which was the
 // ~8 ms/frame zoom-fps cap). The quad is then GPU-scaled to `sz` (batch_run), factor
@@ -455,7 +455,7 @@ static Glyph& get_glyph(Ctx& c, GFont& f, uint32_t cp) {
 }
 
 // Width of a run at font size `fpx`, from UNHINTED per-px advances (uadv*fpx). Because
-// uadv is size-independent, this scales linearly with zoom -- so a column that fits the
+// uadv is size-independent, this scales linearly with zoom, so a column that fits the
 // text at one zoom fits it at every zoom. (Hinted advances jump per integer px size and
 // made the ellipsis-trim flip in and out as you zoomed.)
 static float text_width(Ctx& c, GFont& f, const uint16_t* s, int n, float fpx) {
@@ -570,7 +570,7 @@ static void draw_ops(Ctx& c, const uint8_t* p, size_t n) {
         if (!fpos.empty()) {
             // Cell fills are opaque (glColor3fv alpha=1, selection wash pre-blended in
             // Python). Blending them is a wasted read-modify-write over the whole 5MP
-            // fullscreen surface -- the frame's dominant fill-rate cost. Draw them with
+            // fullscreen surface, the frame's dominant fill-rate cost. Draw them with
             // blend OFF; text (below) re-enables it for its alpha coverage.
             glDisable(GL_BLEND);
             glEnableClientState(GL_VERTEX_ARRAY);

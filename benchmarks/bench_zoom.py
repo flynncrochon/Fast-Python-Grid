@@ -43,7 +43,7 @@ class FakeHost:
 
 # A representative eased z-sweep for measuring per-frame build cost. Real zoom eases
 # by real elapsed time (gpu._ZOOM_TAU); this fixed-fraction synth just needs a similar
-# frame COUNT, not the exact curve -- what it measures is the cost of building one frame.
+# frame COUNT, not the exact curve; what it measures is the cost of building one frame.
 def eased_targets(start, target, ease=0.12, snap=GpuEngine._ZOOM_SNAP):
     """A ~refresh-rate eased z sequence gliding start -> target (representative frame count)."""
     cur, out = start, []
@@ -83,7 +83,7 @@ def main():
     eng.ctl.zoom_to(1.0001); eng.redraw()       # warm caches / JIT of the C++ path
 
     # Time EACH frame (not the whole sweep): a smooth high fps is decided by the WORST
-    # frame, not the average -- one frame over the vblank budget drops a refresh and
+    # frame, not the average; one frame over the vblank budget drops a refresh and
     # reads as a stutter, however fast the median is.
     frame_ms = []
     gc.disable()                                # engine freezes GC for the glide (gpu.zoom); mirror it
@@ -104,7 +104,7 @@ def main():
     print(f"per-frame CPU  median {med:6.3f} ms   p99 {p99:6.3f} ms   worst {worst:6.3f} ms")
     print(f"theoretical fps (vsync off, CPU-bound):  median {1000/med:6.0f}   "
           f"sustained (worst) {1000/worst:6.0f}")
-    print("vblank headroom (CPU frame vs refresh budget -- <100% = frame fits, sustains that fps):")
+    print("vblank headroom (CPU frame vs refresh budget; <100% = frame fits, sustains that fps):")
     for hz, budget in ((60, 16.67), (120, 8.33), (144, 6.94), (240, 4.17)):
         pct = worst / budget * 100
         print(f"   {hz:3d} Hz  budget {budget:5.2f} ms   worst frame = {pct:5.1f}%   "

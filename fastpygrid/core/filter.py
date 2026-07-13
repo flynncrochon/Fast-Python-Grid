@@ -1,11 +1,9 @@
-"""Column filter/sort popup logic -- GUI-free, like FindController.
+"""Column filter/sort popup logic, GUI-free, like FindController.
 
-The GpuEngine filter popup is just a widget: a value checklist, a search box
-and OK/Cancel. All the actual behaviour (deferred distinct scan, per-value
-checked state, search over a capped column, and the exact commit rules for
-"clear vs keep exactly the checked members") lives here. The popup only renders
-``rows(query)`` with a checkbox per ``checked(v)`` and forwards clicks to
-``toggle`` / ``toggle_all`` and OK to ``commit``.
+Behaviour (deferred distinct scan, per-value checked state, search over a capped
+column, commit rules for "clear vs keep exactly the checked") lives here. The
+popup just renders ``rows(query)`` with a checkbox per ``checked(v)`` and forwards
+to ``toggle`` / ``toggle_all`` / ``commit``.
 """
 
 
@@ -19,15 +17,15 @@ class FilterController:
         self.capped = False
 
     def load(self):
-        """Deferred distinct scan, run on the next event-loop tick so opening the
-        popup is instant even on a 1M-row column."""
+        """Deferred distinct scan (next event-loop tick), so opening the popup is
+        instant even on a 1M-row column."""
         self.active = self.model._filters.get(self.col)
         self.preloaded, self.capped = self.model.distinct_capped(self.col)
         self.state = {v: self.checked(v) for v in self.preloaded}
 
     def checked(self, v):
-        """An explicit user toggle, else the default from the active filter (all
-        allowed when there's no filter)."""
+        """Explicit user toggle, else the active filter's default (all allowed when
+        unfiltered)."""
         if self.state and v in self.state:
             return self.state[v]
         return self.active is None or v in self.active
@@ -36,7 +34,7 @@ class FilterController:
         q = query.strip().lower()
         if not q:
             return self.preloaded
-        if self.capped:                # search the whole column, not just the preview
+        if self.capped:                # search whole column, not just the preview
             return self.model.distinct_matching(self.col, q)
         return [v for v in self.preloaded if q in v.lower()]
 
@@ -55,9 +53,9 @@ class FilterController:
             self.state[v] = target
 
     def commit(self, query):
-        """Apply the popup on OK. With a search query: too-many -> "contains",
-        else filter TO the checked matches. Empty query: clear when everything's
-        checked and we know it's everything, else keep exactly the checked."""
+        """Apply on OK. Query present: too-many -> "contains", else filter TO the
+        checked matches. Empty query: clear when all-checked and known complete, else
+        keep exactly the checked."""
         query = query.strip()
         if query:
             rows = self.rows(query)
