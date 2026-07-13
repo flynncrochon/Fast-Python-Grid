@@ -8,7 +8,7 @@
 // gr<hdr -> header row gr, else data index di=gr-hdr -> source row via the view
 // Python pushes (identity when plain). Undo records (combined_row, col, old, new).
 //
-// C ABI, ctypes-loaded (mirrors _d2d/surface.dll). Length-prefixed packing is
+// C ABI, ctypes-loaded (mirrors core/glsurface.dll). Length-prefixed packing is
 // used wherever returned strings can contain \t or \n.
 #include <vector>
 #include <string>

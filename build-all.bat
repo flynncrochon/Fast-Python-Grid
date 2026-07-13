@@ -1,17 +1,13 @@
 @echo off
-REM Build everything in one shot: Windows DLLs, Linux .so (via WSL), then the
-REM wheel + sdist. Requires WSL with Ubuntu-22.04 for the Linux step (see
-REM build-linux.bat for one-time setup).
-REM
-REM Note: build-local.bat recompiles the Windows DLLs via CMake anyway, so the
-REM build-windows.bat step here is only for parity/native iteration. Drop it if you
-REM just want the wheel -- build-linux.bat + build-local.bat is the minimum.
+REM Build BOTH platform wheels into dist\: the Windows win_amd64 wheel and the Linux
+REM linux_x86_64 wheel. Each carries only its own platform's binaries. The Linux step
+REM needs WSL with Ubuntu-22.04 (see build-linux.bat for one-time setup).
 setlocal
 set "ROOT=%~dp0"
 
+if exist "%ROOT%dist" rmdir /s /q "%ROOT%dist"
 call "%ROOT%build-windows.bat" || exit /b 1
 call "%ROOT%build-linux.bat"   || exit /b 1
-call "%ROOT%build-local.bat"   || exit /b 1
 
-echo [build-all] done -^> %ROOT%dist
+echo [build-all] win_amd64 + linux_x86_64 wheels -^> %ROOT%dist
 exit /b 0

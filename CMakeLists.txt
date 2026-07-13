@@ -29,11 +29,12 @@ if(NOT WIN32)
   target_link_libraries(glsurface OpenGL::GL ${X11_LIBRARIES} ${FREETYPE_LIBRARIES})
 endif()
 
-# Install lays out the `fastpygrid` package: the .dll/.so drop into core/ beside the
-# .py that loads them (csrc/ sources are not shipped). Destinations are under
-# fastpygrid/ so this works both for build-local.bat (--prefix dist -> dist/fastpygrid)
-# and the scikit-build-core wheel (prefix = wheel root -> fastpygrid/ in site-packages).
+# Install lays out the `fastpygrid` package: the freshly built .dll/.so drop into
+# core/ beside the .py that loads them (csrc/ sources are not shipped). Destinations
+# are under fastpygrid/ so the scikit-build-core wheel gets prefix = wheel root ->
+# fastpygrid/ in site-packages.
 install(TARGETS gridcore glsurface RUNTIME DESTINATION fastpygrid/core LIBRARY DESTINATION fastpygrid/core)
-# Also carry any prebuilt Linux .so sitting in the tree (from build.sh in WSL) so a
-# Windows wheel build ships both platforms' binaries -> one py3-none-any wheel.
-install(DIRECTORY fastpygrid/ DESTINATION fastpygrid FILES_MATCHING PATTERN "*.py" PATTERN "*.so")
+# Ship the package's Python sources only. Binaries come from the built targets above,
+# so each platform's wheel carries just its own .dll (Windows) or .so (Linux) -- we do
+# NOT sweep stray *.so/*.dll from the tree, which would cross-contaminate the wheels.
+install(DIRECTORY fastpygrid/ DESTINATION fastpygrid FILES_MATCHING PATTERN "*.py")

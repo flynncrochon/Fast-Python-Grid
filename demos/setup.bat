@@ -21,7 +21,8 @@ if exist "%PY%" (
 "%PY%" -m pip install -r "%ROOT%requirements.txt" || exit /b 1
 
 set "WHEEL="
-for %%W in ("%ROOT%dist\*.whl") do set "WHEEL=%%W"
+REM Pick the Windows wheel specifically -- dist\ may also hold the linux_x86_64 wheel.
+for %%W in ("%ROOT%dist\*win_amd64.whl") do set "WHEEL=%%W"
 if defined WHEEL (
     REM Force-reinstall fastpygrid so a rebuilt same-version wheel updates. Then pull
     REM the qt extra (PySide6) for the Qt demo host; idempotent, downloads only once.

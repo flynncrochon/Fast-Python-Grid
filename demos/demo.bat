@@ -43,13 +43,13 @@ goto collect_loop
 :extract
 if not exist "%ROOT%fastpygrid\core\glsurface.dll" (
     echo [demo] Extracting DLLs from dist\*.whl...
-    if not exist "%ROOT%dist\*.whl" (
-        echo [demo] No wheel in dist\. Build first:  python -m fastpygrid.core.gpu --build
+    if not exist "%ROOT%dist\*win_amd64.whl" (
+        echo [demo] No Windows wheel in dist\. Build first:  build-windows.bat
         echo.
         pause
         popd & exit /b 1
     )
-    %PY% -c "import zipfile,glob,os;w=sorted(glob.glob('dist/*.whl'))[-1];z=zipfile.ZipFile(w);[open('fastpygrid/core/'+os.path.basename(n),'wb').write(z.read(n)) for n in z.namelist() if n.endswith('.dll')];print('[demo] extracted DLLs from',w)" || ( echo. & pause & popd & exit /b 1 )
+    %PY% -c "import zipfile,glob,os;w=sorted(glob.glob('dist/*win_amd64.whl'))[-1];z=zipfile.ZipFile(w);[open('fastpygrid/core/'+os.path.basename(n),'wb').write(z.read(n)) for n in z.namelist() if n.endswith('.dll')];print('[demo] extracted DLLs from',w)" || ( echo. & pause & popd & exit /b 1 )
 )
 
 set "PYTHONPATH=%ROOT%"

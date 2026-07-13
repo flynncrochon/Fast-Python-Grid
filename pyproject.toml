@@ -36,6 +36,6 @@ wheel.packages = []
 # The native bits load via ctypes (not a CPython extension), so one wheel works
 # on any Python 3.x; tag it py3, not cp38/cp39/...
 wheel.py-api = "py3"
-# NOTE: the wheel is still platform-tagged (win_amd64 / manylinux), which is what
-# PyPI needs -- pip then picks the right per-OS wheel. build-local.bat overrides this
-# with `-C wheel.platlib=false` to make its single dll+so wheel py3-none-any instead.
+# The wheel is platform-tagged (win_amd64 / manylinux): each carries only its own
+# platform's binary and pip picks the right per-OS wheel. Built by build-windows.bat
+# (Windows), build.sh / build-linux.bat (Linux), or CI (.github/workflows/publish.yml).
