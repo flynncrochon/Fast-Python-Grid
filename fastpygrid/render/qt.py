@@ -122,9 +122,9 @@ class GpuQtGrid(QtWidgets.QWidget):
         if m & QtCore.Qt.ControlModifier:
             self.engine.zoom(1.1 if dy > 0 else 1 / 1.1)
         elif m & QtCore.Qt.ShiftModifier:
-            self.engine._scroll_px(-dy / 120.0 * 40)
+            self.engine.hwheel(dy / 120.0)
         elif abs(dx) > abs(dy):                       # trackpad horizontal swipe
-            self.engine._scroll_px(-dx / 120.0 * 40)
+            self.engine.hwheel(dx / 120.0)
         else:
             self.engine.wheel(dy / 120.0)
 

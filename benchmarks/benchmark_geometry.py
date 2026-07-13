@@ -9,7 +9,7 @@ import time
 
 # needs fastpygrid installed: run demos/setup.bat, or `pip install .`
 from fastpygrid.core.geometry import Geometry
-from fastpygrid.core.model import GridModel
+from fastpygrid.core.coremodel import make_model
 from fastpygrid.core.paint import paint
 
 
@@ -57,7 +57,7 @@ def bench(ncols, rows=2000, iters=2000):
 
     # full paint() build (display list for the visible viewport)
     hdr = ["C%d" % c for c in range(ncols)]
-    m = GridModel(hdr, [[""] * ncols for _ in range(rows)])
+    m = make_model(hdr, [[""] * ncols for _ in range(rows)])
     pnt = _timeit(lambda: paint(m, g, (1, 1), [(1, 1, 1, 1)]), 200)
 
     assert sorted(set(g.visible_cols(ncols)) & set(range(ncols))) == \

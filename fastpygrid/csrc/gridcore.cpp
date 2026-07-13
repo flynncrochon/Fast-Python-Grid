@@ -15,9 +15,15 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdint>
+#include <cstdlib>
+#include <cerrno>
+#include <charconv>
+#include <thread>
 #include <tuple>
 #include <cctype>
+#include <array>
 #include <unordered_map>
+#include <unordered_set>
 
 // Undo entry as struct-of-arrays: one flat index per changed cell + the old
 // text (moved in from the cell during the op, no copy on the hot path). `nw`
@@ -41,6 +47,12 @@ struct Core {
     std::vector<Edit> undo, redo;
     Edit cur;                            // edit being accumulated by the current op
 
+    // Sparse per-cell display styles (was Python's _styles). Key packs (src_row, col):
+    // data src>=0 follows sort/filter, header src=-1-gr. Value = {fg, bg, bold}; fg/bg are
+    // 0xRRGGBB or -1 (unset -> default), bold 0/1. Only styled cells are present.
+    std::unordered_map<int64_t, std::array<int, 3>> styles;
+    static int64_t skey(int src, int col) { return ((int64_t)src << 20) | (uint32_t)col; }
+
     int nrows() const { return cols ? (int)(d.size() / cols) : 0; }
     int ndata() const { return nrows() - hdr; }
     std::string& at(int row, int col) { return d[(size_t)row * cols + col]; }
@@ -58,6 +70,124 @@ struct Core {
 };
 
 static inline bool special(char c) { return c == '\t' || c == '\n' || c == '\r'; }
+// ASCII fold only (A-Z -> a-z). Branchless, avoids libc tolower's locale lookup on
+// the ~millions-of-chars find/sort/filter hot paths. Non-ASCII bytes pass through,
+// matching Python str.lower() on ASCII and C-locale tolower on the rest.
+static inline char lc(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
+
+// ASCII-lower lexicographic compare, no allocation. Bytewise on the folded bytes,
+// which for UTF-8 equals codepoint order == Python's compare of the .lower() strings
+// (ASCII fold only; non-ASCII case may differ, as elsewhere).
+static int casecmp(const std::string& a, const std::string& b) {
+    size_t n = a.size() < b.size() ? a.size() : b.size();
+    for (size_t i = 0; i < n; i++) {
+        unsigned char ca = (unsigned char)lc(a[i]), cb = (unsigned char)lc(b[i]);
+        if (ca != cb) return ca < cb ? -1 : 1;
+    }
+    return a.size() < b.size() ? -1 : (a.size() > b.size() ? 1 : 0);
+}
+
+// Case-insensitive substring, no allocation. `n` is already lowercased; lowercase
+// the haystack on the fly. ASCII fold only (matches gc_find's convention; Python's
+// str.lower() is Unicode-aware, so non-ASCII case may differ -- data is ASCII in
+// practice). Empty needle -> true (mirrors Python's "" in s).
+static bool icontains(const std::string& h, const std::string& n) {
+    size_t hn = h.size(), nn = n.size();
+    if (nn == 0) return true;
+    if (hn < nn) return false;
+    for (size_t i = 0; i + nn <= hn; i++) {
+        size_t k = 0;
+        while (k < nn && lc(h[i + k]) == n[k]) k++;
+        if (k == nn) return true;
+    }
+    return false;
+}
+
+// Parse like Python float(s.replace(",","")): strip ALL commas, then the whole
+// whitespace-trimmed remainder must be a valid float (strtod consumes it all).
+// Handles sign/exp/inf/nan. Diverges only on Python's digit underscores ("1_000"),
+// which are rare in numeric grid data.
+static bool parse_num(const std::string& s, double& out) {
+    const char *b, *e;
+    std::string t;
+    if (s.find(',') == std::string::npos) {                     // common case: no copy
+        b = s.data(); e = b + s.size();
+    } else {
+        t.reserve(s.size());
+        for (char c : s) if (c != ',') t.push_back(c);
+        b = t.data(); e = b + t.size();
+    }
+    while (b < e && isspace((unsigned char)*b)) b++;            // Python float() strips
+    while (e > b && isspace((unsigned char)e[-1])) e--;         // surrounding whitespace
+    if (b < e && *b == '+') b++;                                // ...and accepts a leading '+'
+    if (b >= e) return false;
+    double v;
+    auto r = std::from_chars(b, e, v);                          // locale-free, fast (vs strtod)
+    if (r.ec != std::errc() || r.ptr != e) return false;       // bad parse or trailing garbage
+    out = v; return true;
+}
+
+// Worker count for a parallel scan of `work` items: serial under a threshold (thread
+// setup would dominate small views -- and keeps the fuzz's tiny models single-threaded),
+// else the hardware count capped so we don't oversubscribe a big box.
+static unsigned nthreads(size_t work) {
+    if (work < 20000) return 1;
+    unsigned hw = std::thread::hardware_concurrency();
+    if (hw == 0) hw = 4;
+    return hw < 8 ? hw : 8;               // cap: enough parallelism, bounded spawn cost
+}
+
+// Portable parallel "build then sort" over v[0..n): each chunk BUILDS its own elements
+// (build(i) fills v[i]) and std::sorts itself in ONE pass -- one parallel phase instead
+// of a separate key-build + sort, fewer thread spawns and the build stays cache-hot into
+// the sort. Then adjacent runs merge bottom-up (independent merges run in parallel). No
+// TBB (std::execution::par would need it linked on libstdc++/manylinux). Caller runs the
+// first slice/merge itself (one fewer spawn). `cmp` must be a strict-weak TOTAL order, so
+// the result is unique and identical to a single std::sort -- callers tie-break by data
+// index. Serial under nthreads()'s threshold (keeps the fuzz's tiny models single-thread).
+template <class T, class Build, class Cmp>
+static void psort_build(std::vector<T>& v, Build build, Cmp cmp) {
+    size_t n = v.size();
+    unsigned Tn = nthreads(n);
+    auto do_chunk = [&](size_t lo, size_t hi) {
+        for (size_t i = lo; i < hi; i++) build(i);
+        std::sort(v.begin() + lo, v.begin() + hi, cmp);
+    };
+    if (Tn <= 1) { do_chunk(0, n); return; }
+    size_t chunk = (n + Tn - 1) / Tn;
+    std::vector<std::thread> th;
+    for (size_t lo = chunk; lo < n; lo += chunk) {              // spawn all but first slice
+        size_t hi = lo + chunk > n ? n : lo + chunk;
+        th.emplace_back([&, lo, hi]() { do_chunk(lo, hi); });
+    }
+    do_chunk(0, chunk > n ? n : chunk);                         // first slice on caller
+    for (auto& x : th) x.join();
+    for (size_t width = chunk; width < n; width *= 2) {         // bottom-up merge
+        std::vector<std::thread> mth;
+        size_t first_mid = 0, first_hi = 0;
+        bool have_first = false;
+        for (size_t lo = 0; lo < n; lo += 2 * width) {
+            size_t mid = lo + width > n ? n : lo + width;
+            size_t hi = lo + 2 * width > n ? n : lo + 2 * width;
+            if (mid >= hi) continue;
+            if (!have_first) { first_mid = mid; first_hi = hi; have_first = true; continue; }
+            mth.emplace_back([&, lo, mid, hi]() {
+                std::inplace_merge(v.begin() + lo, v.begin() + mid, v.begin() + hi, cmp); });
+        }
+        if (have_first)                                          // first merge on caller
+            std::inplace_merge(v.begin(), v.begin() + first_mid, v.begin() + first_hi, cmp);
+        for (auto& x : mth) x.join();
+    }
+}
+
+// Iterate a candidate set of data indices. ncand<0 => the full 0..nd-1 range (no
+// filter has narrowed it yet); ncand>=0 => exactly cand[0..ncand) (0 = empty set,
+// cand may be NULL). Template -> must live outside the extern "C" block below.
+template <class F>
+static void each_cand(const int* cand, int ncand, int nd, F f) {
+    if (ncand < 0) for (int di = 0; di < nd; di++) f(di);
+    else           for (int i = 0; i < ncand; i++) f(cand[i]);
+}
 
 // append length-prefixed (u32 LE + bytes) to buf
 static void pack_str(std::string& buf, const std::string& s) {
@@ -91,6 +221,30 @@ static void utf8_to_utf16(const std::string& s, std::vector<uint16_t>& out) {
         else { cp -= 0x10000; out.push_back((uint16_t)(0xD800 + (cp >> 10)));
                                out.push_back((uint16_t)(0xDC00 + (cp & 0x3FF))); }
     }
+}
+
+// `over` at opacity a over opaque base (both 0xRRGGBB) -> 0xRRGGBB. Mirrors paint._blend
+// (round-half-up here vs Python's round-half-even: at most 1/255 off, and only the selection
+// wash over a styled cell -- cosmetic, not fuzz-checked; the zebra washes stay Python-exact).
+static inline int blend_col(int base, int over, double a) {
+    int br = (base >> 16) & 0xFF, bg = (base >> 8) & 0xFF, bb = base & 0xFF;
+    int orr = (over >> 16) & 0xFF, og = (over >> 8) & 0xFF, ob = over & 0xFF;
+    int r = (int)(br * (1 - a) + orr * a + 0.5);
+    int g = (int)(bg * (1 - a) + og * a + 0.5);
+    int b = (int)(bb * (1 - a) + ob * a + 0.5);
+    return (r << 16) | (g << 8) | b;
+}
+
+// Merge a style attr triple into c->styles[key] (mask 1=fg,2=bg,4=bold). A missing entry
+// starts unset {-1,-1,0} so a partial set (only fg / only bold) leaves the others default.
+static void apply_style(Core* c, int src, int col, int fg, int bg, int bold, int mask) {
+    int64_t key = Core::skey(src, col);
+    auto it = c->styles.find(key);
+    if (it == c->styles.end())
+        it = c->styles.emplace(key, std::array<int, 3>{-1, -1, 0}).first;
+    if (mask & 1) it->second[0] = fg;
+    if (mask & 2) it->second[1] = bg;
+    if (mask & 4) it->second[2] = bold;
 }
 
 #ifdef _WIN32
@@ -239,28 +393,107 @@ EXPORT const char* gc_block(void* h, const int* rows, int nr,
     return o.data();
 }
 
+// ---- per-cell STYLES (fg/bg/bold), owned by the core (was Python's _styles) ----
+// Keyed (src_row, col): data src>=0 follows sort/filter, header src=-1-gr. Colors are
+// 0xRRGGBB or -1 (unset). gc_paint_body reads this every frame; color filter/sort/distinct
+// below run over the same map, so those no longer need Python.
+EXPORT void gc_set_style(void* h, int src, int col, int fg, int bg, int bold, int mask) {
+    apply_style((Core*)h, src, col, fg, bg, bold, mask);
+}
+// Bulk apply n records of [src,col,fg,bg,bold,mask] in one call -- kills the per-call FFI
+// cost of styling many cells at once (e.g. demo startup).
+EXPORT void gc_set_styles(void* h, const int* recs, int n) {
+    Core* c = (Core*)h;
+    for (int i = 0; i < n; i++) { const int* e = recs + i * 6;
+        apply_style(c, e[0], e[1], e[2], e[3], e[4], e[5]); }
+}
+EXPORT int gc_get_style(void* h, int src, int col, int* out3) {
+    Core* c = (Core*)h;
+    auto it = c->styles.find(Core::skey(src, col));
+    if (it == c->styles.end()) { out3[0] = -1; out3[1] = -1; out3[2] = 0; return 0; }
+    out3[0] = it->second[0]; out3[1] = it->second[1]; out3[2] = it->second[2];
+    return 1;
+}
+
+// Color filter: keep candidate data rows whose col cell has fg/bg (which 0=fg,1=bg) equal
+// to `color` (0xRRGGBB, or -1 = uncolored -> matches an unset attr / no style). Mirrors
+// a cell's fg/bg (which 0/1) == color (uncolored == -1). cand = source data indices.
+EXPORT const char* gc_style_filter(void* h, int col, int which, int color,
+                                   const int* cand, int ncand, int* out_n) {
+    Core* c = (Core*)h; int nd = c->ndata();
+    std::string& o = c->out; o.clear();
+    each_cand(cand, ncand, nd, [&](int di) {
+        auto it = c->styles.find(Core::skey(di, col));
+        int cc = (it != c->styles.end()) ? it->second[which] : -1;
+        if (cc == color) o.append((const char*)&di, 4);
+    });
+    *out_n = (int)(o.size() / 4);
+    return o.data();
+}
+
+// Color sort: stable partition, cells matching `color` first (ascending) or last (else).
+// Stable partition: match + rest, original order preserved within each group.
+EXPORT const char* gc_style_sort(void* h, int col, int which, int color, int ascending,
+                                 const int* cand, int ncand, int* out_n) {
+    Core* c = (Core*)h; int nd = c->ndata();
+    std::string match, rest;
+    each_cand(cand, ncand, nd, [&](int di) {
+        auto it = c->styles.find(Core::skey(di, col));
+        int cc = (it != c->styles.end()) ? it->second[which] : -1;
+        (cc == color ? match : rest).append((const char*)&di, 4);
+    });
+    std::string& o = c->out; o.clear();
+    if (ascending) { o.append(match); o.append(rest); }
+    else           { o.append(rest);  o.append(match); }
+    *out_n = (int)(o.size() / 4);
+    return o.data();
+}
+
+// Distinct fg/bg colors in a column's DATA cells (header src<0 skipped), ascending. Int
+// order == lowercase-hex order, so this matches Python's sorted() of the hex strings.
+EXPORT const char* gc_distinct_colors(void* h, int col, int which, int* out_n) {
+    Core* c = (Core*)h;
+    std::unordered_set<int> seen;
+    std::vector<int> vals;
+    for (auto& kv : c->styles) {
+        int kcol = (int)(kv.first & 0xFFFFF);
+        int src = (int)(kv.first >> 20);
+        if (kcol != col || src < 0) continue;
+        int cc = kv.second[which];
+        if (cc >= 0 && seen.insert(cc).second) vals.push_back(cc);
+    }
+    std::sort(vals.begin(), vals.end());
+    std::string& o = c->out; o.clear();
+    o.append((const char*)vals.data(), vals.size() * 4);
+    *out_n = (int)vals.size();
+    return o.data();
+}
+
 // Emit the wire ops (one 'R' fill + optional 'T' text per cell) for the visible BODY
-// data cells, in paint.py's exact emission order: caller passes columns already
-// ordered (scrollable then frozen), each iterated over all visible data rows. This is
-// the ~1900-cell hot loop moved off Python. All colours are precomputed by the caller
-// (no blending here); styled cells (sparse) override fg/bg/bold, keyed (source_row,col).
-// Layout mirrors GpuCanvas.rect(x,y,w-1,h-1,fill=bg) + text(x,y,w,h,txt,fg,bold), so
-// the bytes are identical to paint()+blit() for a find-inactive frame.
+// data cells, in paint.py's exact emission order: caller passes columns already ordered
+// (scrollable then frozen), each iterated over all visible data rows. The ~1900-cell hot
+// loop moved off Python. Styles come from c->styles (keyed source_row,col); the selection
+// wash over a styled bg is blended here (sel_tint/sel_wash_a). Find highlight is native
+// too (needle already lowered by the caller when !cs) -- match state per cell mirrors
+// GridModel.find_state / paint._body_cells precedence: active > selection wash > match.
+// Layout mirrors GpuCanvas.rect(x,y,w-1,h-1,fill=bg) + text(x,y,w,h,txt,fg,bold).
 //   cols/colx/colw : ncol visible columns (col index, x, width)
 //   grs/rowy       : nrow visible data rows (grid index, y)
-//   styles         : nsty * [src_row, col, fg, base_bg(-1=none), base_washed, bold]
 //   sel            : nsel * [r1,c1,r2,c2]  (normalized selection, grid coords)
+//   fscope         : nfscope * [r1,c1,r2,c2] find scope, or NULL (whole grid)
+//   active_gr/col  : the active-match cell (grid coords), or -1 (none)
 EXPORT const char* gc_paint_body(void* h,
         const int* cols, const float* colx, const float* colw, int ncol,
         const int* grs, const float* rowy, int nrow,
         float row_h, int H, float fpx, float rect_w,
         const int* sel, int nsel, int single_cell,
         int col_txt, int col_zebra, int col_bg, int wash_even, int wash_odd,
-        const int* styles, int nsty, int* out_len) {
+        int sel_tint, float sel_wash_a,
+        const char* needle, int nlen, int cs,
+        const int* fscope, int nfscope, int active_gr, int active_col,
+        int find_match, int find_active, int* out_len) {
     Core* c = (Core*)h;
-    std::unordered_map<int64_t, const int*> smap;
-    smap.reserve(nsty * 2);
-    for (int i = 0; i < nsty; i++) { const int* e = styles + i * 6; smap[((int64_t)e[0] << 20) | (uint32_t)e[1]] = e; }
+    std::string nd(needle ? needle : "", (needle && nlen > 0) ? nlen : 0);   // pre-lowered if !cs
     std::string& o = c->out; o.clear();
     std::vector<uint16_t> u16;
     for (int k = 0; k < ncol; k++) {
@@ -270,10 +503,15 @@ EXPORT const char* gc_paint_body(void* h,
             int gr = grs[r]; float y = rowy[r];
             int src = c->combined(gr - H);
             bool zeb = ((gr - H) % 2 == 0);
-            int fg = col_txt, base = -1, basew = -1, bold = 0;
+            const std::string* txt = (valid_col && src >= 0) ? &c->at(src, col) : nullptr;
+            int fg = col_txt, base = -1, bold = 0;
             if (src >= 0) {
-                auto it = smap.find(((int64_t)src << 20) | (uint32_t)col);
-                if (it != smap.end()) { const int* e = it->second; fg = e[2]; base = e[3]; basew = e[4]; bold = e[5]; }
+                auto it = c->styles.find(Core::skey(src, col));
+                if (it != c->styles.end()) {
+                    if (it->second[0] >= 0) fg = it->second[0];
+                    base = it->second[1];
+                    bold = it->second[2];
+                }
             }
             bool washed = false;
             if (!single_cell)
@@ -281,11 +519,27 @@ EXPORT const char* gc_paint_body(void* h,
                     const int* R = sel + s * 4;
                     if (R[0] <= gr && gr <= R[2] && R[1] <= col && col <= R[3]) { washed = true; break; }
                 }
-            int bg = washed ? (base >= 0 ? basew : (zeb ? wash_odd : wash_even))
-                            : (base >= 0 ? base  : (zeb ? col_zebra : col_bg));
+            // find state: 2 = active match, 1 = match, 0 = none (body data cells only)
+            int fstate = 0;
+            if (active_gr == gr && active_col == col) fstate = 2;
+            else if (nlen > 0 && txt && !txt->empty()) {
+                bool inscope = true;
+                if (fscope && nfscope) {
+                    inscope = false;
+                    for (int s = 0; s < nfscope; s++) { const int* R = fscope + s * 4;
+                        if (R[0] <= gr && gr <= R[2] && R[1] <= col && col <= R[3]) { inscope = true; break; } }
+                }
+                if (inscope && (cs ? txt->find(nd) != std::string::npos : icontains(*txt, nd)))
+                    fstate = 1;
+            }
+            int bg;
+            if (fstate == 2)      bg = find_active;
+            else if (washed)      bg = (base >= 0 ? blend_col(base, sel_tint, sel_wash_a)
+                                                  : (zeb ? wash_odd : wash_even));
+            else if (fstate == 1) bg = find_match;
+            else                  bg = (base >= 0 ? base : (zeb ? col_zebra : col_bg));
             o.push_back('R'); put_f32(o, x); put_f32(o, y); put_f32(o, w - 1); put_f32(o, row_h - 1);
             put_i32(o, bg); put_i32(o, -1); put_f32(o, rect_w);
-            const std::string* txt = (valid_col && src >= 0) ? &c->at(src, col) : nullptr;
             if (txt && !txt->empty()) {
                 u16.clear(); utf8_to_utf16(*txt, u16);
                 o.push_back('T'); put_f32(o, x); put_f32(o, y); put_f32(o, w); put_f32(o, row_h);
@@ -509,10 +763,9 @@ EXPORT const char* gc_find(void* h, const char* needle, int nlen, int cs,
     auto match = [&](int row, int col) -> bool {
         const std::string& v = c->at(row, col);
         if ((int)v.size() < nlen) return false;
-        if (cs) return v.find(nd) != std::string::npos;
-        std::string lv = v;
-        for (char& ch : lv) ch = (char)tolower((unsigned char)ch);
-        return lv.find(nd) != std::string::npos;
+        // no per-cell allocation (this runs over every grid cell, ~millions):
+        // case-sensitive uses find directly; insensitive folds on the fly.
+        return cs ? v.find(nd) != std::string::npos : icontains(v, nd);
     };
     if (scope && nscope) {
         // dedup via a visited flag would need a set, scopes are small rects, so
@@ -529,17 +782,149 @@ EXPORT const char* gc_find(void* h, const char* needle, int nlen, int cs,
             }
         }
     } else {
-        for (int gr = 0; gr < gtot; gr++) {
-            int row = c->combined(gr);
-            if (row < 0) continue;
-            for (int col = 0; col < nc; col++)
-                if (match(row, col)) {
-                    emit(gr, col);
-                    if (count >= limit) { *out_capped = 1; *out_count = count; return o.data(); }
-                }
+        unsigned T = nthreads((size_t)gtot * nc);
+        if (T <= 1) {
+            for (int gr = 0; gr < gtot; gr++) {
+                int row = c->combined(gr);
+                if (row < 0) continue;
+                for (int col = 0; col < nc; col++)
+                    if (match(row, col)) {
+                        emit(gr, col);
+                        if (count >= limit) { *out_capped = 1; *out_count = count; return o.data(); }
+                    }
+            }
+        } else {
+            // Partition data rows across threads; each collects (gr,col) pairs into its
+            // own buffer (read-only over the grid, so no locking), then concatenate in
+            // row order -> identical bytes to the serial scan. Cap applied after.
+            std::vector<std::string> bufs(T);
+            std::vector<std::thread> th;
+            int chunk = (gtot + (int)T - 1) / (int)T;
+            for (unsigned t = 0; t < T; t++) {
+                int lo = (int)t * chunk, hi = lo + chunk;
+                if (hi > gtot) hi = gtot;
+                if (lo >= hi) break;
+                th.emplace_back([&, t, lo, hi]() {
+                    std::string& b = bufs[t];
+                    for (int gr = lo; gr < hi; gr++) {
+                        int row = c->combined(gr);
+                        if (row < 0) continue;
+                        for (int col = 0; col < nc; col++)
+                            if (match(row, col)) {
+                                b.append((const char*)&gr, 4); b.append((const char*)&col, 4);
+                            }
+                    }
+                });
+            }
+            for (auto& x : th) x.join();
+            for (auto& b : bufs) o.append(b);
+            count = (int)(o.size() / 8);
+            if (count > limit) { o.resize((size_t)limit * 8); count = limit; *out_capped = 1; }
         }
     }
     *out_count = count;
+    return o.data();
+}
+
+// ---- VIEW (filter + sort) over DATA rows, off Python's per-cell FFI loop. ----
+// Each takes a candidate list of DATA indices (0..ndata-1), or cand=NULL => all
+// data rows, and returns the kept/ordered DATA indices packed as int32 into
+// c->out (count in *out_n). Chained by CoreModel._rebuild: value filter -> text
+// filter -> sort, each fed the previous result. Data index di -> cell at row hdr+di.
+// (Color filter/sort now run natively too: gc_style_filter / gc_style_sort above.)
+
+// value filter: keep rows whose col cell text is in `allowed` (packed u32-len + bytes).
+EXPORT const char* gc_filter_set(void* h, int col, const char* allowed, int nallowed,
+                                 const int* cand, int ncand, int* out_n) {
+    Core* c = (Core*)h; int H = c->hdr, nd = c->ndata();
+    std::unordered_set<std::string> set; set.reserve(nallowed * 2);
+    const char* p = allowed;
+    for (int i = 0; i < nallowed; i++) { uint32_t n; memcpy(&n, p, 4); p += 4; set.emplace(p, n); p += n; }
+    std::string& o = c->out; o.clear();
+    each_cand(cand, ncand, nd, [&](int di) {
+        if (set.count(c->at(H + di, col))) o.append((const char*)&di, 4);
+    });
+    *out_n = (int)(o.size() / 4);
+    return o.data();
+}
+
+// text filter, ASCII-lower both sides.
+// op: 0 contains, 1 equals, 2 not_equals, 3 begins, 4 ends, 5 not_contains.
+EXPORT const char* gc_filter_text(void* h, int col, int op, const char* needle, int nlen,
+                                  const int* cand, int ncand, int* out_n) {
+    Core* c = (Core*)h; int H = c->hdr, nd = c->ndata();
+    std::string rhs(needle, nlen); for (char& ch : rhs) ch = lc(ch);
+    std::string lhs;
+    auto keep = [&](int di) -> bool {
+        const std::string& raw = c->at(H + di, col);
+        lhs.assign(raw); for (char& ch : lhs) ch = lc(ch);       // reused buffer, no per-cell alloc
+        size_t ls = lhs.size(), rs = rhs.size();
+        switch (op) {
+            case 1: return lhs == rhs;
+            case 2: return lhs != rhs;
+            case 3: return ls >= rs && lhs.compare(0, rs, rhs) == 0;
+            case 4: return ls >= rs && lhs.compare(ls - rs, rs, rhs) == 0;
+            case 5: return lhs.find(rhs) == std::string::npos;
+            default: return lhs.find(rhs) != std::string::npos;   // contains
+        }
+    };
+    std::string& o = c->out; o.clear();
+    each_cand(cand, ncand, nd, [&](int di) { if (keep(di)) o.append((const char*)&di, 4); });
+    *out_n = (int)(o.size() / 4);
+    return o.data();
+}
+
+// sort candidates by col. Semantics: blanks ("") always last in original order;
+// text -> stable by ASCII-lower; numeric -> parseable floats first (stable by value),
+// then unparsed (original order), then blanks. ascending flips only the compared group
+// (reverse=!asc), stably (ties keep original order).
+EXPORT const char* gc_sort(void* h, int col, int ascending, int numeric,
+                           const int* cand, int ncand, int* out_n) {
+    Core* c = (Core*)h; int H = c->hdr, nd = c->ndata();
+    auto cell = [&](int di) -> const std::string& { return c->at(H + di, col); };
+    size_t ncnd = ncand < 0 ? (size_t)nd : (size_t)ncand;
+    auto cdi = [&](size_t i) { return cand ? cand[i] : (int)i; };   // i-th candidate's data index
+    // Build each candidate's key AND sort in ONE parallel pass (psort_build). A `rank`
+    // in the comparator folds the blank/unparsed tiers to the end -- so no separate
+    // serial partition or blank gather. The di tie-break makes the comparator a TOTAL
+    // order, so the parallel sort is deterministic and stable (blanks last, then within a
+    // tier ties keep original ascending-di order, both directions).
+    std::vector<int> out;
+    out.reserve(ncnd);
+    if (numeric) {
+        // rank 0 = parseable float (sorts by value), 1 = non-numeric, 2 = blank. Python
+        // puts non-numbers after numbers and blanks last, in original order, never
+        // reversed -- so rank orders those tiers identically in both directions.
+        struct NK { double v; int di; char rank; };
+        std::vector<NK> el(ncnd);
+        psort_build(el,
+            [&](size_t i) { int di = cdi(i); const std::string& s = cell(di); double v = 0;
+                            char rank = s.empty() ? 2 : (parse_num(s, v) ? 0 : 1);
+                            el[i] = {rank == 0 ? v : 0.0, di, rank}; },
+            [ascending](const NK& a, const NK& b) {
+                if (a.rank != b.rank) return a.rank < b.rank;
+                if (a.rank == 0 && a.v != b.v) return ascending ? a.v < b.v : a.v > b.v;
+                return a.di < b.di; });
+        for (auto& e : el) out.push_back(e.di);
+    } else {
+        // rank 0 = non-blank (sorts by ASCII-lower key), 1 = blank (last, original order).
+        struct TK { std::string k; int di; char rank; };
+        std::vector<TK> el(ncnd);
+        psort_build(el,
+            [&](size_t i) { int di = cdi(i); const std::string& s = cell(di);
+                            if (s.empty()) { el[i] = {std::string(), di, 1}; return; }
+                            std::string k = s; for (char& ch : k) ch = lc(ch);
+                            el[i] = {std::move(k), di, 0}; },
+            [ascending](const TK& a, const TK& b) {
+                if (a.rank != b.rank) return a.rank < b.rank;
+                int r = a.k.compare(b.k);
+                if (r) return ascending ? r < 0 : r > 0;
+                return a.di < b.di; });
+        for (auto& e : el) out.push_back(e.di);
+    }
+    std::string& o = c->out; o.clear();
+    o.append((const char*)out.data(), out.size() * 4);
+    *out_n = (int)out.size();
     return o.data();
 }
 

@@ -285,10 +285,10 @@ def _chrome(model, C, active, hover_corner, frozen, chrome, overlays):
             y = g.row_y(gr) + g.row_h_at(gr)               # bottom edge of row gr
             overlays.append(("hline", g.gutter_w, y, x_end, y, T.SECTION, rw or T.SECTION_W))
     # corner triangle: selection orange only when whole sheet selected (Ctrl+A / drag
-    # spanning header+data), hover orange on hover, else grey.
+    # spanning header+data), light on hover, else dark at rest.
     lr, lc = model.data_extent()
     all_selected = any(r1 == 0 and c1 == 0 and r2 >= lr and c2 >= lc for (r1, c1, r2, c2) in norm)
-    tri_color = T.SEL_RING if all_selected else T.ACCENT if hover_corner else T.GRID
+    tri_color = T.SEL_RING if all_selected else T.GRID if hover_corner else T.TRI_IDLE
     overlays.append(("tri", g.gutter_w - 3, lh - 3, max(5, min(g.gutter_w, lh) // 2),
                      tri_color))
     # Selection outline = perimeter of the union: emit an edge only where the neighbour

@@ -62,14 +62,6 @@ def _grow(box, gr, col):
     return (min(box[0], gr), min(box[1], col), max(box[2], gr), max(box[3], col))
 
 
-def _is_num(s):
-    try:
-        float(s.replace(",", ""))
-        return True
-    except ValueError:
-        return False
-
-
 def _clean(cell):
     # skip rebuilding the common already-clean string
     if "\t" in cell or "\n" in cell or "\r" in cell:
@@ -116,7 +108,6 @@ class GridModel:
         self._numeric = set()     # columns sorted numerically (smallest->largest) not a->z
         self._readonly = set()    # columns that reject edits/paste/delete (still selectable)
         self._readonly_rows = set()  # SOURCE rows (-1-gr for header) that reject edits, follows sort/filter
-        self._styles = {}         # (src_row | -1 for header, col) -> {fg,bg,bold}, display only
         self._choices = {}        # (src_row | -1, col) -> (choice, ...), a dropdown cell
         self._col_choices = {}    # col -> (choice, ...), whole-column dropdown default (O(1))
         self._choice_cols = set() # columns holding any dropdown (paint() per-column skip)
@@ -130,60 +121,18 @@ class GridModel:
         return (not self._filters and not self._text_filters
                 and not self._color_filters and self._sort is None)
 
-    @staticmethod
-    def _match_text(text, spec):
-        op, needle = spec
-        lhs, rhs = text.lower(), str(needle).lower()
-        if op == "equals":       return lhs == rhs
-        if op == "not_equals":   return lhs != rhs
-        if op == "begins":       return lhs.startswith(rhs)
-        if op == "ends":         return lhs.endswith(rhs)
-        if op == "not_contains": return rhs not in lhs
-        return rhs in lhs        # contains
-
-    def _sort_rows(self, rows, col, ascending):
-        dec = [(self._rows[r][col], r) for r in rows]
-        blanks = [r for t, r in dec if t == ""]
-        filled = [(t, r) for t, r in dec if t != ""]
-        if col in self._numeric:
-            # strips commas only; add %/currency parsing if a column needs it
-            num = lambda s: float(s.replace(",", ""))
-            unparsed = [(t, r) for t, r in filled if not _is_num(t)]
-            filled = [(t, r) for t, r in filled if _is_num(t)]
-            filled.sort(key=lambda it: num(it[0]), reverse=not ascending)
-            return [r for _t, r in filled] + [r for _t, r in unparsed] + blanks
-        filled.sort(key=lambda it: it[0].lower(), reverse=not ascending)
-        return [r for _t, r in filled] + blanks
-
-    def _cell_color(self, r, col, which):
-        """The 'fg'/'bg' hex of a SOURCE cell's style, or None if uncolored."""
-        st = self._styles.get((r, col))
-        return st.get(which) if st else None
-
-    def _sort_by_color(self, rows, col, ascending, which, color):
-        """Bring rows whose `col` cell has `which` color == `color` to the top
-        (ascending) or bottom, keeping each group's order. color=None = uncolored."""
-        match = [r for r in rows if self._cell_color(r, col, which) == color]
-        rest = [r for r in rows if self._cell_color(r, col, which) != color]
-        return match + rest if ascending else rest + match
-
     def _rebuild(self):
+        """GridModel is the abstract base; CoreModel (C++) is the concrete model. Data ops
+        (filter/sort/color) and styling/paint all live in CoreModel -- there's no pure-Python
+        reimplementation to keep in sync. A bare GridModel supports only a plain view (the
+        shared view-state/geometry/choices scaffolding the tests exercise)."""
         self._find_cache = None            # view changed -> cached grid-row coords stale
         self._used = None                  # ...and the used-range (scrollbar) snapshot
         if self._is_plain():
             self._view = []      # unread while plain; don't build 1M ids
             return
-        rows = range(len(self._rows))      # narrowed by first filter, not materialised up front
-        for col, allowed in self._filters.items():
-            rows = [r for r in rows if self._rows[r][col] in allowed]
-        for col, spec in self._text_filters.items():
-            rows = [r for r in rows if self._match_text(self._rows[r][col], spec)]
-        for col, (which, color) in self._color_filters.items():
-            rows = [r for r in rows if self._cell_color(r, col, which) == color]
-        if self._sort is not None:
-            rows = (self._sort_by_color(rows, *self._sort) if len(self._sort) == 4
-                    else self._sort_rows(rows, self._sort[0], self._sort[1]))
-        self._view = rows if type(rows) is list else list(rows)
+        raise NotImplementedError(
+            "filter/sort/color views require the C++ engine; use make_model() (CoreModel).")
 
     # --- shape / access (GRID rows: 0..H-1 = header, H..N = data) -----
     @property
@@ -278,25 +227,6 @@ class GridModel:
             return None
         r = self._src_data(di)
         return (r, col) if r < len(self._rows) else None    # not the pad
-
-    def set_cell_style(self, gr, col, fg=None, bg=None, bold=None):
-        """Style one cell. fg/bg (#rrggbb) or bold (bool); None leaves that attr
-        unchanged."""
-        key = self._style_key(gr, col)
-        if key is None:
-            return
-        st = self._styles.setdefault(key, {})
-        for k, v in (("fg", fg), ("bg", bg), ("bold", bold)):
-            if v is not None:
-                st[k] = v
-        self.changed()
-
-    def cell_style(self, gr, col):
-        """Style dict for a cell, or None. Hot path (per visible cell): no-styles
-        case is one dict-empty check."""
-        if not self._styles:
-            return None
-        return self._styles.get(self._style_key(gr, col))
 
     # --- per-cell dropdown choices (display only, keyed like styles so they follow
     # sort/filter). Editing offers a select menu instead of free text (renderers'
@@ -445,13 +375,6 @@ class GridModel:
                 if len(seen) > cap:
                     break
         return sorted(seen)[:cap]
-
-    def distinct_colors(self, col, which):
-        """Sorted distinct 'fg'/'bg' hex colors of styled cells in `col` (uncolored
-        not listed). Scans styled cells only."""
-        seen = {st[which] for (r, c), st in self._styles.items()
-                if c == col and r >= 0 and which in st}
-        return sorted(seen)
 
     def has_filter(self, col):
         return (col in self._filters or col in self._text_filters

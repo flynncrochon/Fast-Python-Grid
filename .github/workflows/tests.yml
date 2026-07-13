@@ -25,7 +25,7 @@ jobs:
           python-version: "3.12"
       - name: Build gridcore.so (Linux)
         if: runner.os == 'Linux'
-        run: g++ -O2 -std=c++17 -fPIC -shared fastpygrid/csrc/gridcore.cpp -o fastpygrid/core/gridcore.so
+        run: g++ -O2 -std=c++17 -pthread -fPIC -shared fastpygrid/csrc/gridcore.cpp -o fastpygrid/core/gridcore.so
       - name: Build gridcore.dll (Windows)
         if: runner.os == 'Windows'
         run: |

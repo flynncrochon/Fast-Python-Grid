@@ -29,7 +29,7 @@ from .gridcontroller import GridController
 from .filter import FilterController
 from .find import FindController
 from .paint import (paint, edit_colors, DisplayList, _prelude, _chrome, _dropdowns,
-                    _blend, SEL_WASH_A)
+                    SEL_WASH_A)
 from .render import blit, blit_fast
 
 # Overlay chrome colors, decoupled from the cell palette.
@@ -45,6 +45,7 @@ _SB_THUMB = "#b7b1a3"
 _SB_TRACK_DK = "#232220"    # on the dark filter panel
 _SB_THUMB_DK = "#5c574d"
 _SB_THUMB_HOVER = T.ACCENT  # thumb brightens to the accent on hover/drag
+_SB_ARROW_HOVER = "#9a968c"  # end arrows lighten on hover (accent while held)
 
 
 def _sb_metrics(track_start, track_len, content, view, offset):
@@ -429,8 +430,8 @@ class GpuEngine:
         self._find = None            # open find bar state, or None
         self._filter = None          # open filter popup state, or None
         self._sbw = max(12, round(14 * s))            # scrollbar thickness
-        self._vsb = {"hover": False, "drag": False, "grab": 0, "thumb": None}
-        self._hsb = {"hover": False, "drag": False, "grab": 0, "thumb": None}
+        self._vsb = {"hover": False, "drag": False, "grab": 0, "thumb": None, "arrow_hover": None}
+        self._hsb = {"hover": False, "drag": False, "grab": 0, "thumb": None, "arrow_hover": None}
         self._ptr = None             # last pointer (x,y): re-check hover when thumb slides under
         self._arrow = False          # pointer over a ▼ button (hand cursor)
         self._next = None
@@ -456,6 +457,8 @@ class GpuEngine:
         self._zoom_after = None         # zoom animation timer handle, or None when idle
         self._zoom_to = None            # target zoom factor
         self._zoom_t = 0.0              # perf_counter of last zoom-ease tick (real-dt)
+        self._zoomfps = os.environ.get("FASTPYGRID_ZOOMFPS") == "1"   # print real glide fps
+        self._zoom_frames = []          # (ts, build_ms, upload_ms) for the current glide (fps probe)
         model.changed = lambda: self._coalesce(self.redraw)
 
     # --- surface lifecycle (lazy: device created on first Configure, after the
@@ -510,10 +513,10 @@ class GpuEngine:
     def _blit_fast(self, cv):
         """Native body path: the viewport data-cell loop runs in C++ (gc_paint_body),
         its wire bytes splice into the GpuCanvas buffer; only chrome stays in Python.
-        True if it built the frame; False (fallback) with no C++ core or an active
-        find (per-cell needle match stays in Python)."""
+        True if it built the frame; False (fallback) only with no C++ core. Styles and
+        find highlight are resolved in C++, so this runs during a find too."""
         m, g = self.model, self.geom
-        if getattr(m, "_find_needle", "") or not hasattr(m, "gc_paint_body"):
+        if not hasattr(m, "gc_paint_body"):
             return False
         C = _prelude(m, g, self.ctl.ranges())
         fz = g.frozen
@@ -545,28 +548,15 @@ class GpuEngine:
         g = self.geom
         colx = [g.col_x(c) for c in cols]
         colw = [g.col_width(c) for c in cols]
-        # Style overrides gathered viewport-bounded: look up only visible cells'
-        # styles, never iterate the whole (100k-entry) style map. Key is
-        # (source_row, col), matching _style_key for data.
-        styles = []
-        sd = m._styles
-        if sd:
-            get = sd.get
-            srcs = [m._src_data(gr - C.H) for gr in grs]   # visible data rows -> source, once
-            for col in cols:
-                for src in srcs:
-                    sty = get((src, col))
-                    if not sty:
-                        continue
-                    bg = sty.get("bg")
-                    base = _col(bg) if bg else -1
-                    basew = _col(_blend(bg, T.SEL_TINT, SEL_WASH_A)) if bg else -1
-                    styles += [src, col, _col(sty.get("fg", T.TXT)), base, basew,
-                               1 if sty.get("bold") else 0]
+        # Styles live in the core (read per-cell by gc_paint_body); the selection wash over
+        # a styled bg is blended there from sel_tint/SEL_WASH_A. Find highlight is native
+        # too, so no per-cell Python work here at all.
         wire = m.gc_paint_body(cols, colx, colw, grs, rowy, g.row_h, C.H, self._fpx,
                                max(1, round(self._scale)), sel, C.single_cell,
                                _col(T.TXT), _col(T.ZEBRA), _col(T.BG),
-                               _col(C.wash_even), _col(C.wash_odd), styles)
+                               _col(C.wash_even), _col(C.wash_odd),
+                               _col(T.SEL_TINT), SEL_WASH_A,
+                               _col(T.FIND_MATCH), _col(T.FIND_ACTIVE))
         box = [min(colx), min(rowy),
                max(colx[i] + colw[i] for i in range(len(colx))), max(rowy) + g.row_h]
         return wire, box
@@ -578,6 +568,15 @@ class GpuEngine:
                 return
         cv = GpuCanvas(self._fpx, self._scale)
         anim = 1 if self._zoom_to is not None else 0          # zoom glide: renderer scales cached glyphs
+        if self._zoomfps and self._zoom_to is not None:       # FASTPYGRID_ZOOMFPS=1: split build vs upload
+            t0 = time.perf_counter()
+            ok = self.paint_to(cv)
+            t1 = time.perf_counter()
+            if ok:
+                self._lib.gpu_render(self._surf, bytes(cv.buf), len(cv.buf), _col(T.LETTER_BG), anim)
+                t2 = time.perf_counter()
+                self._zoom_frames.append((t2, (t1 - t0) * 1000, (t2 - t1) * 1000))
+            return
         if self.paint_to(cv):
             self._lib.gpu_render(self._surf, bytes(cv.buf), len(cv.buf), _col(T.LETTER_BG), anim)
 
@@ -1525,6 +1524,7 @@ class GpuEngine:
             # is a ~10 ms stutter. Freeze GC for the glide, sweep once at settle.
             gc.disable()
             self._zoom_t = time.perf_counter()          # glide clock start (real-dt ease)
+            self._zoom_frames = []                       # fps probe: fresh glide
             self._zoom_after = self.host.after(self._ZOOM_MS, self._zoom_anim_tick)
 
     def _zoom_anim_tick(self):
@@ -1538,7 +1538,21 @@ class GpuEngine:
         if abs(gap) <= self._ZOOM_SNAP:
             self.ctl.zoom_to(self._zoom_to)
             self._zoom_to = None
-            gc.enable(); gc.collect()          # glide done: resume GC, sweep deferred garbage
+            # Resume GC now, but defer the one-time sweep to idle: a synchronous
+            # gc.collect() here lands a full gen-2 collection on the settle frame (the
+            # same frame that re-rasters glyphs at exact px), a ~20ms hitch at the end
+            # of every zoom. after_idle runs it once the crisp frame has presented.
+            gc.enable()
+            self.host.after_idle(gc.collect)
+            if self._zoomfps and len(self._zoom_frames) > 1:
+                ts = [f[0] for f in self._zoom_frames]
+                span = ts[-1] - ts[0]
+                n = len(self._zoom_frames)
+                build = sum(f[1] for f in self._zoom_frames) / n
+                upload = sum(f[2] for f in self._zoom_frames) / n
+                print("zoom glide: %d frames in %.0f ms = %.0f fps  |  avg build %.2f ms  "
+                      "gpu_render+vsync %.2f ms" %
+                      (n, span * 1000, (n - 1) / span if span else 0, build, upload))
             return
         frac = 1.0 - math.exp(-dt / self._ZOOM_TAU)      # real-dt exponential decay (frame-rate independent)
         self.ctl.zoom_to(cur + gap * frac)
@@ -1585,16 +1599,18 @@ class GpuEngine:
     # A notch nudges the target a couple rows, easing eats a fraction of the gap per
     # ~90fps frame; target lead and per-frame move are capped so a fast spin can't
     # fling or lag.
-    _WHEEL_ROWS = 2.0        # rows per notch added to the vertical target
-    _HWHEEL_PX = 48.0        # px per notch for shift-wheel / trackpad-x
+    _WHEEL_ROWS = 2.0        # vertical rows per notch (px/notch = _WHEEL_ROWS * row_h,
+                             # DPI/zoom-independent)
+    _HWHEEL_ROWS = 6.0       # horizontal notch in row_h units: columns are far wider than
+                             # row_h, so matching the vertical step felt sluggish. 6*22≈one col.
     _SCROLL_EASE = 0.30      # fraction of the remaining gap consumed each frame
     _SCROLL_MS = 11          # animation timer period (~90 Hz)
-    _SCROLL_SNAP = 0.5       # px: within this of target -> land exactly and stop
+    _SCROLL_SNAP = 1.0       # px: within this of target -> land exactly and stop
     _SCROLL_MAX_FRAC = 0.22  # per-frame move cap, fraction of viewport (caps top speed)
     _SCROLL_LEAD_FRAC = 1.1  # target may lead the live position by at most this * viewport
 
-    def _scroll_px(self, dx):                          # shift-wheel / trackpad horizontal
-        self._scroll_smooth(dx=float(dx) / 40.0 * self._HWHEEL_PX)
+    def hwheel(self, notches):     # shift-wheel / trackpad-x
+        self._scroll_smooth(dx=-notches * self._HWHEEL_ROWS * self.geom.row_h)
 
     def _scroll_smooth(self, dx=0.0, dy=0.0):
         if self._dropdown:
@@ -1638,6 +1654,11 @@ class GpuEngine:
             if abs(gap) <= self._SCROLL_SNAP:
                 return target, True
             step = gap * self._SCROLL_EASE
+            # scroll_x/y render as ints; a sub-pixel step rounds to the same pixel for
+            # several frames then jumps 1px = visible judder in the ease tail. Floor the
+            # step to a whole pixel so every frame advances exactly 1px near the target.
+            if abs(step) < 1.0:
+                step = 1.0 if gap > 0 else -1.0
             cap = self._SCROLL_MAX_FRAC * view
             return cur + max(-cap, min(cap, step)), False
 
@@ -1655,14 +1676,21 @@ class GpuEngine:
 
     # --- scrollbars: drawn in the reserved right/bottom strips, thumb brightens to
     # accent on hover/drag. ---
-    def _sb_arrow(self, cv, rect, d):
+    def _sb_arrow(self, cv, rect, d, color):
         """A scrollbar end button: a filled triangle pointing in direction `d`."""
         bx, by, w, h = rect
         cx, cy, r = bx + w / 2, by + h / 2, w * 0.22
         cv.poly({"up":    [(cx, cy - r), (cx - r, cy + r), (cx + r, cy + r)],
                  "down":  [(cx, cy + r), (cx - r, cy - r), (cx + r, cy - r)],
                  "left":  [(cx - r, cy), (cx + r, cy - r), (cx + r, cy + r)],
-                 "right": [(cx + r, cy), (cx - r, cy - r), (cx - r, cy + r)]}[d], T.ARROW_IDLE)
+                 "right": [(cx + r, cy), (cx - r, cy - r), (cx - r, cy + r)]}[d], color)
+
+    def _arrow_color(self, sb, axis, sign, name):
+        """Held arrow -> accent (like the thumb); hovered -> lighter; else idle."""
+        p = self._sbpage
+        if p and p[0] == "step" and p[1] == axis and p[2] == sign:
+            return _SB_THUMB_HOVER
+        return _SB_ARROW_HOVER if sb.get("arrow_hover") == name else T.ARROW_IDLE
 
     def _draw_scrollbars(self, cv, sw, sh):
         g, sbw = self.geom, self._sbw
@@ -1680,7 +1708,8 @@ class GpuEngine:
         else:
             self._vsb["thumb"] = None
         self._vsb["up"], self._vsb["down"] = (g.w, 0, sbw, sbw), (g.w, g.h - sbw, sbw, sbw)
-        self._sb_arrow(cv, self._vsb["up"], "up"); self._sb_arrow(cv, self._vsb["down"], "down")
+        self._sb_arrow(cv, self._vsb["up"], "up", self._arrow_color(self._vsb, "v", -1, "up"))
+        self._sb_arrow(cv, self._vsb["down"], "down", self._arrow_color(self._vsb, "v", 1, "down"))
         cv.rect(0, g.h, g.w, sbw, fill=_SB_TRACK)                     # horizontal track
         total, avail = g.col_extent(), g.w - g.freeze_x()
         hm = _sb_metrics(sbw, g.w - 2 * sbw, max(1, total), avail, g.scroll_x)
@@ -1692,7 +1721,8 @@ class GpuEngine:
         else:
             self._hsb["thumb"] = None
         self._hsb["left"], self._hsb["right"] = (0, g.h, sbw, sbw), (g.w - sbw, g.h, sbw, sbw)
-        self._sb_arrow(cv, self._hsb["left"], "left"); self._sb_arrow(cv, self._hsb["right"], "right")
+        self._sb_arrow(cv, self._hsb["left"], "left", self._arrow_color(self._hsb, "h", -1, "left"))
+        self._sb_arrow(cv, self._hsb["right"], "right", self._arrow_color(self._hsb, "h", 1, "right"))
         cv.rect(g.w, g.h, sbw, sbw, fill=_SB_TRACK)                   # corner
         # A thumb may have slid under a stationary cursor; re-test hover against the
         # new rects (_sb_hover redraws only if a flag flips).
@@ -1760,8 +1790,11 @@ class GpuEngine:
         if self._sbpage_after is not None:
             self.host.after_cancel(self._sbpage_after)   # no-op on stale ids
             self._sbpage_after = None
+        was_step = self._sbpage and self._sbpage[0] == "step"
         self._sbpage = None
         self._sbpage_pos = None
+        if was_step:
+            self.redraw()                                # drop the arrow's held (accent) tint
 
     def _start_fpage(self, y):
         """Same hold-and-glide as the grid track, but easing the filter list's row top."""
@@ -1838,12 +1871,22 @@ class GpuEngine:
             self.geom.clamp(self.model.nrows()); self._coalesce(self._paint_now); return True
         return False
 
+    def _which_arrow(self, sb, names, x, y):
+        for name in names:
+            if self._in(sb.get(name), x, y):
+                return name
+        return None
+
     def _sb_hover(self, x, y):
-        """Update thumb hover flags. Return True if the pointer is over a scrollbar."""
+        """Update thumb + arrow hover flags. Return True if over a scrollbar."""
         vh = self._in(self._vsb["thumb"], x, y)
         hh = self._in(self._hsb["thumb"], x, y)
-        if vh != self._vsb["hover"] or hh != self._hsb["hover"]:
+        va = self._which_arrow(self._vsb, ("up", "down"), x, y)
+        ha = self._which_arrow(self._hsb, ("left", "right"), x, y)
+        if (vh != self._vsb["hover"] or hh != self._hsb["hover"]
+                or va != self._vsb["arrow_hover"] or ha != self._hsb["arrow_hover"]):
             self._vsb["hover"], self._hsb["hover"] = vh, hh
+            self._vsb["arrow_hover"], self._hsb["arrow_hover"] = va, ha
             self.redraw()
         return x >= self.geom.w or y >= self.geom.h
 
@@ -1869,7 +1912,7 @@ class GpuEngine:
 
 def _selftest():
     from ..core.geometry import Geometry
-    from .model import GridModel
+    from .coremodel import make_model
     from ..core.paint import paint
     from ..core.render import blit
     from types import SimpleNamespace
@@ -1930,7 +1973,7 @@ def _selftest():
 
     # B: full pipeline: real model through paint()->blit()->GpuCanvas. Probe a
     # data-cell interior, it must be painted (not the black clear sentinel).
-    model = GridModel(["A", "B", "C"], [["x", "y", "z"], ["1", "2", "3"]])
+    model = make_model(["A", "B", "C"], [["x", "y", "z"], ["1", "2", "3"]])
     g = Geometry([120, 120, 120], 0, hdr_rows=model.header_rows)
     g.w, g.h = 400, 200
     cv = GpuCanvas(13)

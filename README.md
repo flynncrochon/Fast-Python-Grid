@@ -16,6 +16,13 @@ holds the logic, under a thin Tk or Qt host.
 
 ![fastpygrid sample grid: a multi-cell selection with a column filter popup open](docs/screenshot.png)
 
+## Install
+
+```bash
+pip install fastpygrid            # Tk host (stdlib only)
+pip install fastpygrid PySide6    # add the Qt host
+```
+
 ## Requirements
 
 | Requirement | Details |
@@ -25,13 +32,6 @@ holds the logic, under a thin Tk or Qt host.
 | **Tk host** | Standard library only (`tkinter`). |
 | **Qt host** | Needs `PySide6` (`pip install PySide6`), the only dependency, and only for the Qt host. |
 | **Native libs** | The wheel bundles `glsurface` (OpenGL renderer) and `gridcore` (C++ data core). Both required; build from source needs CMake + a C++17 compiler (MSVC on Windows; GCC/Clang + GL/X11/FreeType dev headers on Linux). |
-
-## Install
-
-```bash
-pip install fastpygrid            # Tk host (stdlib only)
-pip install fastpygrid PySide6    # add the Qt host
-```
 
 ## Example
 

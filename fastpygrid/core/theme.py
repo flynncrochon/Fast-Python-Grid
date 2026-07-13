@@ -6,6 +6,7 @@ BG = "#ffffff"
 ZEBRA = "#f0eee6"       # alternate body row
 TXT = "#202020"
 GRID = "#d5d2c8"
+TRI_IDLE = "#6a675f"    # corner triangle at rest (dark); lightens to GRID on hover
 
 # --- header / bands (dark) ---
 LETTER_BG = "#262624"   # column-letter band + void

@@ -1,10 +1,10 @@
 """Headless self-check of the FilterController commit rules."""
 from fastpygrid.core.filter import FilterController
-from fastpygrid.core.model import GridModel
+from fastpygrid.core.coremodel import make_model
 
 
 def test_commit_rules():
-    m = GridModel(["A"], [["x"], ["y"], ["x"], ["z"]])
+    m = make_model(["A"], [["x"], ["y"], ["x"], ["z"]])
     f = FilterController(m, 0); f.load()
     assert f.rows("") == ["x", "y", "z"], f.rows("")
     assert f.all_on(f.rows(""))

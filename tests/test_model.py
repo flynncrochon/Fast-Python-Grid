@@ -1,9 +1,46 @@
 """Headless check of GridModel view/style state (editing lives in CoreModel now)."""
 from fastpygrid.core.model import GridModel
+from fastpygrid.core.coremodel import make_model
+
+
+def test_core_cell_styles():
+    """CoreModel styles live in the C++ core (gc_set_style/gc_get_style/...)."""
+    m = make_model(["A", "B"], [["x", "p"], ["y", "q"], ["z", "r"]])
+    # partial-update mask: set fg, then bold; each leaves the other attrs intact.
+    m.set_cell_style(1, 0, fg="#ff0000")
+    m.set_cell_style(1, 0, bold=True)
+    assert m.cell_style(1, 0) == {"fg": "#ff0000", "bold": True}
+    m.set_cell_style(1, 0, bg="#00ff00")
+    assert m.cell_style(1, 0) == {"fg": "#ff0000", "bg": "#00ff00", "bold": True}
+    assert m.cell_style(2, 0) is None
+    # style is keyed by SOURCE row -> follows the cell through a sort. desc col0 (z,y,x)
+    # orders source [2,1,0], so styled source row0 ([x,p]) lands at grid row 3.
+    m.set_sort(0, ascending=False)
+    assert m.cell_style(3, 0) == {"fg": "#ff0000", "bg": "#00ff00", "bold": True}
+    assert m.cell_style(1, 0) is None                       # grid row1 is now source row2
+    m.clear_sort()
+    # bulk set + distinct_colors (both native)
+    m.set_cell_styles([(1, 1, None, "#0000ff", None), (2, 1, None, "#0000ff", None)])
+    assert m.distinct_colors(1, "bg") == ["#0000ff"]
+    # header cells key negatively and store too
+    m.set_cell_style(0, 0, bg="#abcdef")
+    assert m.cell_style(0, 0) == {"bg": "#abcdef"}
+
+
+def test_core_color_filter_sort():
+    """Color filter/sort compose with value ops, natively (gc_style_filter/sort)."""
+    m = make_model(["A"], [["a"], ["b"], ["c"], ["d"]])
+    m.set_cell_style(1, 0, bg="#ff0000")                    # source row0 = a
+    m.set_cell_style(3, 0, bg="#ff0000")                    # source row2 = c
+    m.set_color_filter(0, "bg", "#ff0000")
+    assert [m.cell(gr, 0) for gr in range(1, m.nrows())] == ["a", "c"]
+    m.set_color_filter(0, None, None)
+    m.set_color_sort(0, "bg", "#ff0000", ascending=True)    # matches first, order kept
+    assert [m.cell(gr, 0) for gr in range(1, m.nrows())] == ["a", "c", "b", "d"]
 
 
 def test_filter_sort_undo():
-    m = GridModel(["A", "B"], [["x", "p"], ["y", "q"], ["x", "r"], ["z", "s"]])
+    m = make_model(["A", "B"], [["x", "p"], ["y", "q"], ["x", "r"], ["z", "s"]])
     # filter/sort commit as undoable "view" entries (no cell diff)
     m.set_filter(0, {"x"}); assert m.has_filter(0)
     assert m.undo() is None and not m.has_filter(0)      # reverted, no cell jump
@@ -15,7 +52,7 @@ def test_filter_sort_undo():
 
 def test_numeric_sort():
     # numeric sort: "10" > "9" numerically, but a->z would order it first
-    n = GridModel(["N"], [["10"], ["9"], ["100"], [""], ["2"]])
+    n = make_model(["N"], [["10"], ["9"], ["100"], [""], ["2"]])
     n.set_column_numeric(0); n.set_sort(0, ascending=True)
     assert [n._rows[r][0] for r in n._view] == ["2", "9", "10", "100", ""]
     n.set_column_numeric(0, False)
@@ -35,7 +72,7 @@ def test_cell_choices_interned():
 
 
 def test_lines_and_readonly():
-    m = GridModel(["A", "B"], [["x", "p"], ["y", "q"], ["x", "r"], ["z", "s"]])
+    m = make_model(["A", "B"], [["x", "p"], ["y", "q"], ["x", "r"], ["z", "s"]])
     # grid lines + readonly flags
     assert m.vlines() == {} and m.hlines() == {}
     m.set_vline(0); m.set_hline(1, width=4)

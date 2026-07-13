@@ -7,10 +7,14 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# gridcore: the C++ data engine. Its .cpp #pragma comment(lib, ...) the Windows libs,
-# so no target_link_libraries needed. No "lib" prefix -> ctypes loads it by name.
+# gridcore: the C++ data engine. Its .cpp #pragma comment(lib, ...) the Windows libs.
+# No "lib" prefix -> ctypes loads it by name. It parallelizes sort/filter/find with
+# std::thread, which needs pthread linked on glibc < 2.34 (e.g. the manylinux_2_28
+# wheel container); Threads::Threads is a no-op on MSVC.
+find_package(Threads REQUIRED)
 add_library(gridcore SHARED fastpygrid/csrc/gridcore.cpp)
 set_target_properties(gridcore PROPERTIES PREFIX "")
+target_link_libraries(gridcore PRIVATE Threads::Threads)
 
 # glsurface: the OpenGL 1.1 render backend (the only renderer). On Windows the .cpp
 # #pragma comment(lib, ...) the opengl32/gdi32 libs. On Linux it needs GL, X11 and

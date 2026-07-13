@@ -127,15 +127,18 @@ class GridController:
         nrows, ncols = m.nrows(), m.ncols
         row = g.drag_row(y, nrows)
         col = g.x_to_col(x, ncols)
-        if col is None:
-            col = g.frozen if x < g.gutter_w else ncols - 1
-        # frozen-pane crossing: dragging left past the freeze line targets the
-        # scrollable column hidden under the frozen block (revealed one per motion)
-        # instead of snapping onto a pinned frozen column.
-        col = S.edge_reveal_col(col, anchor_col=self.anchor[1], frozen_cols=g.frozen,
-                                scroll_x=g.scroll_x, ncols=ncols, pointer_x=x,
-                                gutter_w=g.gutter_w, frozen_w=g.frozen_w(),
-                                body_w=g.w, leaf_x=g.col_x)
+        if x < g.gutter_w:
+            col = 0                                    # past the left edge -> select down to col 0; the frozen cells
+        else:                                          # select naturally while autoscroll reveals the hidden gap.
+            if col is None:
+                col = ncols - 1                        # past the right edge / phantom
+            # Over the frozen block: reveal the hidden scrollable columns one per
+            # motion; once scrolled home this returns the frozen column under the
+            # pointer so the selection lands on the pinned cells.
+            col = S.edge_reveal_col(col, anchor_col=self.anchor[1], frozen_cols=g.frozen,
+                                    scroll_x=g.scroll_x, ncols=ncols, pointer_x=x,
+                                    gutter_w=g.gutter_w, frozen_w=g.frozen_w(),
+                                    body_w=g.w, leaf_x=g.col_x)
         self.sel, self.active = S.resolve_drag(
             self.drag_region, row, col, anchor=self.anchor, **self.bounds())
         if follow:

@@ -17,8 +17,10 @@ cd "$(dirname "$0")"
 FLAGS="-shared -fPIC -O3 -std=c++17"
 OUT=fastpygrid/core
 
+# -pthread: gridcore parallelizes sort/filter/find with std::thread, which needs
+# pthread linked on glibc < 2.34.
 echo "[build] gridcore.so"
-g++ $FLAGS fastpygrid/csrc/gridcore.cpp -o "$OUT/gridcore.so"
+g++ $FLAGS -pthread fastpygrid/csrc/gridcore.cpp -o "$OUT/gridcore.so"
 
 echo "[build] glsurface.so"
 g++ $FLAGS -I/usr/include/freetype2 fastpygrid/csrc/glsurface.cpp \

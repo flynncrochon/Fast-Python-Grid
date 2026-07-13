@@ -65,8 +65,9 @@ def resolve_drag(drag_region, row, col, *, top_hrow, last_row, last_col, anchor)
     """Resolve a drag-extend into ``(sel, active)``; anchor unchanged.
 
     ``drag_region`` is where the drag STARTED: ``"gutter"`` extends whole rows,
-    ``"band"`` whole columns, else a cell rectangle. Caller handles frozen-pane
-    crossing (see :func:`edge_reveal_col`) before passing ``col`` for a cell drag.
+    ``"band"`` whole columns, else a cell rectangle. ``col`` is the column under
+    the pointer (frozen or scrollable), so the rectangle spans onto frozen columns
+    naturally.
     """
     ar, ac = anchor
     if drag_region == "gutter":
@@ -80,17 +81,22 @@ def resolve_drag(drag_region, row, col, *, top_hrow, last_row, last_col, anchor)
 
 def edge_reveal_col(col, *, anchor_col, frozen_cols, scroll_x, ncols,
                     pointer_x, gutter_w, frozen_w, body_w, leaf_x):
-    """Frozen-pane crossing for a horizontal cell drag.
+    """Frozen-pane crossing for a horizontal cell drag OVER the frozen block.
 
     No frozen columns (``frozen_cols <= 0``) -> no-op, returns ``col`` unchanged.
     Otherwise keyed on the ANCHOR column, so a vertical drag begun in a frozen
     column keeps its column:
 
-      * Started scrollable, pointer at/left of the freeze line with columns
-        scrolled off -> target the scrollable column hidden under the frozen block
-        (caller's scroll-into-view reveals it). NEVER snap onto a frozen column.
+      * Started scrollable, pointer over the frozen block with columns scrolled
+        off -> reveal the scrollable column hidden under the frozen block, one per
+        motion (caller's scroll-into-view reveals it). Once fully scrolled home
+        (``scroll_x == 0``) this falls through and returns the frozen column under
+        the pointer, so the selection lands on the pinned cells.
       * Pointer past the right edge -> next column right.
       * Else -> the pointer's own column.
+
+    The caller handles the far-LEFT edge (pointer past the gutter) separately:
+    there it selects down to column 0 so the frozen cells select naturally.
 
     ``leaf_x`` maps a column index to its current screen x.
     """

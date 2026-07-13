@@ -16,6 +16,7 @@ import ctypes
 import os
 import struct
 import sys
+from array import array as _array
 
 from .model import GridModel, _clean, _grow
 from .selection import normalize as _norm_ranges
@@ -44,12 +45,22 @@ def _load():
         "gc_copy": ([P, I, I, I, I, IP], P),
         "gc_block": ([P, IP, I, IP, I, IP], P),
         "gc_paint_body": ([P, IP, FP, FP, I, IP, FP, I, F, I, F, F,
-                           IP, I, I, I, I, I, I, I, IP, I, IP], P),
+                           IP, I, I, I, I, I, I, I, I, F,
+                           C, I, I, IP, I, I, I, I, I, IP], P),
         "gc_delete": ([P, IP, I, IP, I, IP, I, IP], I),
         "gc_paste": ([P, I, I, C, I, IP, I, IP, I, I, I, IP], I),
         "gc_set_cell": ([P, I, I, C, IP, I, IP, I], I),
         "gc_undo": ([P, IP], I), "gc_redo": ([P, IP], I),
         "gc_find": ([P, C, I, I, IP, I, I, IP, IP], P),
+        "gc_filter_set": ([P, I, C, I, IP, I, IP], P),
+        "gc_filter_text": ([P, I, I, C, I, IP, I, IP], P),
+        "gc_sort": ([P, I, I, I, IP, I, IP], P),
+        "gc_set_style": ([P, I, I, I, I, I, I], None),
+        "gc_set_styles": ([P, IP, I], None),
+        "gc_get_style": ([P, I, I, IP], I),
+        "gc_style_filter": ([P, I, I, I, IP, I, IP], P),
+        "gc_style_sort": ([P, I, I, I, I, IP, I, IP], P),
+        "gc_distinct_colors": ([P, I, I, IP], P),
     }
     for name, (args, res) in sig.items():
         fn = getattr(lib, name)
@@ -74,6 +85,24 @@ def _farr(seq):
     if not seq:
         return None
     return (ctypes.c_float * len(seq))(*seq)
+
+
+# text-filter op name -> gc_filter_text code (default contains)
+_TEXT_OP = {"contains": 0, "equals": 1, "not_equals": 2,
+            "begins": 3, "ends": 4, "not_contains": 5}
+
+# style attr -> gc_style_filter/sort/distinct index; hex <-> packed int at the FFI boundary.
+_WHICH = {"fg": 0, "bg": 1}
+
+
+def _col_int(hexstr):
+    """'#rrggbb' -> 0xRRGGBB, None/'' -> -1 (unset/uncolored, matching the C++ sentinel)."""
+    return int(hexstr[1:], 16) if hexstr else -1
+
+
+def _hex(v):
+    """0xRRGGBB -> '#rrggbb' (lowercase), or None if unset (-1)."""
+    return "#%06x" % v if v >= 0 else None
 
 
 def _pack(rows):
@@ -153,13 +182,72 @@ class CoreModel(GridModel):
         if c and _LIB:
             _LIB.gc_free(c)
 
-    # ---- view: GridModel's Python rebuild, then push the mapping to C++ ----
+    # ---- view: filter + sort in C++ (off Python's per-cell FFI loop), push mapping ----
     def _rebuild(self):
-        super()._rebuild()
+        self._find_cache = None            # view changed -> cached grid-row coords stale
+        self._used = None                  # ...and the used-range (scrollbar) snapshot
         if self._is_plain():
+            self._view = []
             _LIB.gc_set_view(self._core, None, -1)
-        else:
-            arr, n = _iarr(self._view)
+            return
+        self._view = self._native_view()
+        self._push_view()
+
+    def _native_view(self):
+        """Value/text/color filters + text/numeric/color sort all run natively in C++
+        (off Python's per-cell FFI loop), chained value->text->color filter->sort to
+        keep GridModel._rebuild's order. Styles live in the core now (gc_style_*), so
+        no Python composition step. Returns the final view as array('i')."""
+        outn = ctypes.c_int()
+
+        def cand(buf):                     # bytes of int32 -> (c_int*, n); n<0 => all rows
+            if buf is None:
+                return None, -1            # no filter yet: C side iterates all data rows
+            n = len(buf) // 4              # n may be 0: empty set (all filtered out), NOT all
+            return ((ctypes.c_int * n).from_buffer_copy(buf) if n else None), n
+
+        # 1. value + text filters, native. buf = bytes of di, or None = all data rows.
+        buf = None
+        for col, allowed in self._filters.items():
+            cp, cn = cand(buf)
+            packed = _pack([list(allowed)]) if allowed else b""
+            p = _LIB.gc_filter_set(self._core, col, packed, len(allowed),
+                                   cp, cn, ctypes.byref(outn))
+            buf = ctypes.string_at(p, outn.value * 4)
+        for col, (op, needle) in self._text_filters.items():
+            cp, cn = cand(buf)
+            nb = str(needle).encode("utf-8")
+            p = _LIB.gc_filter_text(self._core, col, _TEXT_OP.get(op, 0), nb, len(nb),
+                                    cp, cn, ctypes.byref(outn))
+            buf = ctypes.string_at(p, outn.value * 4)
+        # 2. color filters, native (over the core's style map).
+        for col, (which, color) in self._color_filters.items():
+            cp, cn = cand(buf)
+            p = _LIB.gc_style_filter(self._core, col, _WHICH[which], _col_int(color),
+                                     cp, cn, ctypes.byref(outn))
+            buf = ctypes.string_at(p, outn.value * 4)
+        # 3. sort (last): color sort or text/numeric sort, both native.
+        if self._sort is not None:
+            cp, cn = cand(buf)
+            if len(self._sort) == 4:            # color sort
+                col, asc, which, color = self._sort
+                p = _LIB.gc_style_sort(self._core, col, _WHICH[which], _col_int(color),
+                                       1 if asc else 0, cp, cn, ctypes.byref(outn))
+            else:
+                col, asc = self._sort[0], self._sort[1]
+                p = _LIB.gc_sort(self._core, col, 1 if asc else 0,
+                                 1 if col in self._numeric else 0, cp, cn, ctypes.byref(outn))
+            buf = ctypes.string_at(p, outn.value * 4)
+        return _array("i", buf) if buf is not None else _array("i")
+
+    def _push_view(self):
+        v = self._view
+        if not v:
+            _LIB.gc_set_view(self._core, None, 0)      # empty view (all filtered out)
+        elif isinstance(v, _array):
+            _LIB.gc_set_view(self._core, (ctypes.c_int * len(v)).from_buffer(v), len(v))
+        else:                                          # list, from the Python fallback
+            arr, n = _iarr(v)
             _LIB.gc_set_view(self._core, arr, n)
 
     def _ro_arrays(self):
@@ -213,21 +301,89 @@ class CoreModel(GridModel):
         return out
 
     def gc_paint_body(self, cols, colx, colw, grs, rowy, row_h, H, fpx, rect_w,
-                      sel, single_cell, col_txt, col_zebra, col_bg, wash_even, wash_odd, styles):
+                      sel, single_cell, col_txt, col_zebra, col_bg, wash_even, wash_odd,
+                      sel_tint, sel_wash_a, find_match, find_active):
         """Emit wire bytes for the visible body cells natively (the viewport-sized hot
-        loop). paint._blit_fast marshals geometry/colours/styles; this crosses to C++
-        gc_paint_body and returns its buffer. See fastpygrid/csrc."""
+        loop). Styles + find highlight are resolved in C++ (gc_paint_body reads the core's
+        style map and the find state pulled from self here), so _blit_fast marshals only
+        geometry/palette -- no per-cell style gather, and it runs even during a find."""
         ca, ncol = _iarr(cols)
         ga, nrow = _iarr(grs)
         sa, nsel4 = _iarr(sel)
-        sta, nsty6 = _iarr(styles)
+        # find state (needle pre-lowered by set_find when !case); scope/active are grid coords.
+        nb = (getattr(self, "_find_needle", "") or "").encode("utf-8")
+        cs = 1 if getattr(self, "_find_case", False) else 0
+        scope = getattr(self, "_find_scope", None)
+        if scope:
+            fsc, nf = _iarr([v for rect in scope for v in rect])
+            nfscope = nf // 4
+        else:
+            fsc, nfscope = None, 0
+        active = getattr(self, "_find_active", None)
+        ag, ac = (int(active[0]), int(active[1])) if active else (-1, -1)
         ln = ctypes.c_int(0)
         p = _LIB.gc_paint_body(self._core, ca, _farr(colx), _farr(colw), ncol,
                                ga, _farr(rowy), nrow, float(row_h), int(H),
                                float(fpx), float(rect_w), sa, nsel4 // 4,
                                1 if single_cell else 0, col_txt, col_zebra, col_bg,
-                               wash_even, wash_odd, sta, nsty6 // 6, ctypes.byref(ln))
+                               wash_even, wash_odd, sel_tint, float(sel_wash_a),
+                               nb, len(nb), cs, fsc, nfscope, ag, ac,
+                               find_match, find_active, ctypes.byref(ln))
         return ctypes.string_at(p, ln.value)
+
+    # ---- per-cell styles -> C++ (was GridModel's Python _styles dict) ----
+    def set_cell_style(self, gr, col, fg=None, bg=None, bold=None):
+        key = self._style_key(gr, col)
+        if key is None:
+            return
+        mask = (1 if fg is not None else 0) | (2 if bg is not None else 0) \
+            | (4 if bold is not None else 0)
+        if not mask:
+            return
+        _LIB.gc_set_style(self._core, key[0], key[1],
+                          _col_int(fg), _col_int(bg), 1 if bold else 0, mask)
+        self.changed()
+
+    def set_cell_styles(self, entries):
+        """Bulk-apply many styles in ONE FFI. entries: iterable of (gr, col, fg, bg, bold),
+        each attr None = leave as-is (same semantics as set_cell_style). Use this instead of
+        a per-cell set_cell_style loop for mass styling (e.g. demo startup)."""
+        recs = []
+        for gr, col, fg, bg, bold in entries:
+            key = self._style_key(gr, col)
+            if key is None:
+                continue
+            mask = (1 if fg is not None else 0) | (2 if bg is not None else 0) \
+                | (4 if bold is not None else 0)
+            if not mask:
+                continue
+            recs += [key[0], key[1], _col_int(fg), _col_int(bg), 1 if bold else 0, mask]
+        if not recs:
+            return
+        arr = (ctypes.c_int * len(recs))(*recs)
+        _LIB.gc_set_styles(self._core, arr, len(recs) // 6)
+        self.changed()
+
+    def cell_style(self, gr, col):
+        key = self._style_key(gr, col)
+        if key is None:
+            return None
+        out3 = (ctypes.c_int * 3)()
+        if not _LIB.gc_get_style(self._core, key[0], key[1], out3):
+            return None
+        st = {}
+        if out3[0] >= 0:
+            st["fg"] = _hex(out3[0])
+        if out3[1] >= 0:
+            st["bg"] = _hex(out3[1])
+        if out3[2]:
+            st["bold"] = True
+        return st or None
+
+    def distinct_colors(self, col, which):
+        outn = ctypes.c_int()
+        p = _LIB.gc_distinct_colors(self._core, col, _WHICH[which], ctypes.byref(outn))
+        return [_hex(v) for v in _array("i", ctypes.string_at(p, outn.value * 4))]
 
     # ---- bulk hot paths -> C++ ----
     def selection_text(self, ranges):

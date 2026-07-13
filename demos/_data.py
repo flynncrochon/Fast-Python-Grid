@@ -50,14 +50,16 @@ def style_demo(model, lo=None, hi=None):
     chg, rating, note = HEADERS.index("Chg%"), HEADERS.index("Rating"), HEADERS.index("Note")
     lo = model.header_rows if lo is None else lo
     hi = model._real_rows() if hi is None else hi
+    entries = []                                   # one bulk set_cell_styles call (one FFI)
     for gr in range(lo, hi):
         v = model.cell(gr, chg)
         if v:
-            model.set_cell_style(gr, chg, fg="#c0392b" if v.startswith("-") else "#1e8449", bold=True)
+            entries.append((gr, chg, "#c0392b" if v.startswith("-") else "#1e8449", None, True))
         if model.cell(gr, rating) == "Strong Buy":
-            model.set_cell_style(gr, rating, fg="#1e8449", bold=True)
+            entries.append((gr, rating, "#1e8449", None, True))
         if model.cell(gr, note) == "watch":
-            model.set_cell_style(gr, note, bg="#fff3b0")
+            entries.append((gr, note, None, "#fff3b0", None))
+    model.set_cell_styles(entries)
 
 
 def stream_styles(win, chunk=4000):
