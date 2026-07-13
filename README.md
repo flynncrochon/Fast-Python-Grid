@@ -167,16 +167,22 @@ m.set_readonly_col(0)       # Ticker can't be edited
 ## Build
 
 ```bash
-build.bat
+build-all.bat
 ```
 
-Runs `python -m build`, which drives CMake to compile the DLLs and produce
-`dist/fastpygrid-*.whl` + `.tar.gz` (same artifacts as CI/PyPI). Needs CMake,
-MSVC, and Python's `build`. Re-run after any `.cpp`/`.py` change.
+Builds everything: the Windows DLLs, the Linux `.so` (via WSL), then
+`python -m build` to produce `dist/fastpygrid-*.whl` + `.tar.gz` — one
+`py3-none-any` wheel holding both platforms' binaries. Needs CMake, MSVC,
+Python's `build`, and WSL (`Ubuntu-22.04`) for the `.so`. Re-run after any
+`.cpp`/`.py` change.
+
+Sub-scripts if you don't need the full cross-platform wheel: `build-windows.bat`
+(DLLs only), `build-linux.bat` (`.so` only), `build-local.bat` (DLLs + wheel,
+no Linux step).
 
 ## Run demo
 
-After `build.bat`, launch the OpenGL demo. It copies the built DLLs out of
+After `build-all.bat`, launch the OpenGL demo. It copies the built DLLs out of
 `dist/*.whl` on first run, then prompts for the tk or qt host:
 
 ```bash
@@ -204,7 +210,7 @@ Fast-Python-Grid/
 |   |-- render/             # tk.py (tkinter host), qt.py (PySide6 host)
 |   `-- csrc/               # C++ sources: glsurface.cpp, gridcore.cpp
 |-- CMakeLists.txt          # compiles the DLLs (scikit-build-core)
-|-- build.bat               # python -m build -> dist/*.whl + *.tar.gz (same as CI/PyPI)
+|-- build-all.bat           # windows + linux + wheel -> dist/*.whl + *.tar.gz (dll + so)
 |-- demos/                  # demo_gpu_tk.py, demo_gpu_qt.py, _data.py, benchmark_*.py, setup.bat (wheel into demos/.venv)
 `-- tests/                  # headless self-checks (pytest; needs fastpygrid installed)
 ```

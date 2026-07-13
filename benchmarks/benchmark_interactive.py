@@ -8,7 +8,7 @@ records its time. Smoothness is a worst-case property, so we report p50 / p95 / 
 per phase (a single 40 ms hitch matters more than a great average).
 
 Run:  python benchmarks/benchmark_interactive.py
-Needs the DLLs built (build.bat) into fastpygrid/core/.
+Needs the DLLs built (build-all.bat) into fastpygrid/core/.
 """
 import gc
 import sys
@@ -152,7 +152,7 @@ def bench(headers, rows):
 
 def main():
     if _load_lib() is None:
-        print("OpenGL backend (glsurface) not built, run build.bat"); return 1
+        print("OpenGL backend (glsurface) not built, run build-all.bat"); return 1
     headers, rows = _dataset()
     r = bench(headers, rows)
     print("interactive benchmark  (%dx%d fullscreen, %d cells on screen, %d rows x %d cols)\n"

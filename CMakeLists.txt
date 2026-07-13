@@ -27,7 +27,9 @@ endif()
 
 # Install lays out the `fastpygrid` package: the .dll/.so drop into core/ beside the
 # .py that loads them (csrc/ sources are not shipped). Destinations are under
-# fastpygrid/ so this works both for build.bat (--prefix dist -> dist/fastpygrid)
+# fastpygrid/ so this works both for build-local.bat (--prefix dist -> dist/fastpygrid)
 # and the scikit-build-core wheel (prefix = wheel root -> fastpygrid/ in site-packages).
 install(TARGETS gridcore glsurface RUNTIME DESTINATION fastpygrid/core LIBRARY DESTINATION fastpygrid/core)
-install(DIRECTORY fastpygrid/ DESTINATION fastpygrid FILES_MATCHING PATTERN "*.py")
+# Also carry any prebuilt Linux .so sitting in the tree (from build.sh in WSL) so a
+# Windows wheel build ships both platforms' binaries -> one py3-none-any wheel.
+install(DIRECTORY fastpygrid/ DESTINATION fastpygrid FILES_MATCHING PATTERN "*.py" PATTERN "*.so")

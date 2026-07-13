@@ -1,6 +1,6 @@
 @echo off
 REM Create demos\.venv, install deps, and install the freshly built wheel into it
-REM so the demos import fastpygrid from the venv. Run build.bat first (dist\*.whl).
+REM so the demos import fastpygrid from the venv. Run build-all.bat first (dist\*.whl).
 setlocal
 REM This bat lives in demos/, so ROOT is its parent (the repo root).
 set "DEMOS=%~dp0"
@@ -29,7 +29,7 @@ if defined WHEEL (
     "%PY%" -m pip install "%WHEEL%[qt]" || exit /b 1
     echo [setup] Installed %WHEEL% (with qt extra: PySide6)
 ) else (
-    echo [setup] NOTE: no wheel in dist\. Run build.bat first, then re-run setup.bat.
+    echo [setup] NOTE: no wheel in dist\. Run build-all.bat first, then re-run setup.bat.
 )
 
 echo [setup] Done. Run demo.bat to launch.

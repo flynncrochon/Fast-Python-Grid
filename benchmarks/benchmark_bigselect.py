@@ -10,7 +10,7 @@ so every frame both scrolls and grows the selection. We report p50/p95/max per p
 and the final selection extent, to prove it really went off-screen huge.
 
 Run:  python benchmarks/benchmark_bigselect.py       (add FASTPYGRID_VSYNC=0 for uncapped)
-Needs the DLLs built (build.bat) into fastpygrid/core/.
+Needs the DLLs built (build-all.bat) into fastpygrid/core/.
 """
 import gc
 import sys
@@ -112,7 +112,7 @@ def bench(headers, rows):
 
 def main():
     if _load_lib() is None:
-        print("OpenGL backend (glsurface) not built, run build.bat"); return 1
+        print("OpenGL backend (glsurface) not built, run build-all.bat"); return 1
     headers, rows = _dataset()
     w, h, phases = bench(headers, rows)
     print("big-selection benchmark  (%dx%d fullscreen, %d rows x %d cols dataset)\n"

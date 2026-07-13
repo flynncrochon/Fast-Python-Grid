@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the two Linux shared objects (gridcore.so, glsurface.so) straight into
 # fastpygrid/core/, where coremodel.py / gpu.py load them via ctypes. The Linux
-# counterpart to build.bat, run it inside WSL or on any Linux box:
+# counterpart to build-windows.bat, run it inside WSL or on any Linux box:
 #
 #   wsl bash build.sh          # from a Windows shell
 #   ./build.sh                 # from inside WSL / Linux

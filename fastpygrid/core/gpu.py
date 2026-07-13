@@ -12,7 +12,7 @@ Provides:
   * TextField: custom text-input control (measures via a host callable).
 
 Hosts: fastpygrid.render.tk / .qt; use their make_sheet() to launch.
-Build: build.bat (compiles DLLs, copies package into dist\fastpygrid).
+Build: build-all.bat (compiles DLLs, copies package into dist\fastpygrid).
 """
 import ctypes
 import gc
@@ -104,10 +104,10 @@ def _load_lib():
 
 
 def build():
-    """Build the dist (all .py + both DLLs) via build.bat. Dev-only: build.bat and
+    """Build the dist (all .py + both DLLs) via build-all.bat. Dev-only: build-all.bat and
     the .cpp source aren't in the shipped package."""
     root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
-    bat = os.path.join(root, "build.bat")
+    bat = os.path.join(root, "build-all.bat")
     return subprocess.call([bat], cwd=root, shell=True) == 0
 
 
@@ -1887,7 +1887,7 @@ def _selftest():
 
     lib = _load_lib()
     if lib is None:
-        print("%s not built. Run build.bat, then import from dist\\fastpygrid"
+        print("%s not built. Run build-all.bat, then import from dist\\fastpygrid"
               % os.path.basename(_lib_path()))
         return 1
 
