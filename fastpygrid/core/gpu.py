@@ -137,12 +137,9 @@ def _enable_dpi_awareness():
     """Windows: make the process DPI-aware so the surface renders sharp, not
     bitmap-stretched on hi-DPI. No-op elsewhere.
 
-    Also disables Qt HighDPI scaling: the engine works in physical px, so Qt must
-    report dpr==1 or clicks map toward the origin and the surface renders into a
-    1/dpr corner. Env vars must be set before QApplication; both Qt entry points
-    call this right before creating it. No-op for Tk."""
-    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
-    os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
+    Only the Tk host calls this (before its root window) -- Tk doesn't opt in on
+    its own. Qt gets it free: QApplication makes the process DPI-aware when created,
+    and the Qt host converts logical<->physical per-event via devicePixelRatioF()."""
     try:
         import ctypes as _c
         try:
@@ -393,6 +390,37 @@ class TextField:
             cv.line(cxp, y + 3, cxp, y + h - 3, fg, 1)
 
 
+class GridFacade:
+    """Public convenience API mixed into the host widgets (Qt/Tk) so callers use
+    grid.reset_view()/select()/open_find()/scroll_to()/export()/subscribe() instead
+    of reaching into engine/ctl/geom internals. Requires self.engine + self.model,
+    set by the host __init__."""
+    def reset_view(self):
+        """Zoom to 1.0 and scroll to the top-left origin."""
+        self.engine.reset_view()
+
+    def select(self, r, c):
+        """Select grid cell (r, c) (header rows included), scrolling it into view."""
+        self.engine.select(r, c)
+
+    def scroll_to(self, r, c):
+        """Scroll grid cell (r, c) into view without changing the selection."""
+        self.engine.scroll_to(r, c)
+
+    def open_find(self):
+        """Open the find bar (same as Ctrl+F)."""
+        self.engine.reveal_find()
+
+    def export(self):
+        """(headers, rows) in source order — stable read-back for autosave/export."""
+        return self.model.export()
+
+    def subscribe(self, fn):
+        """Register fn() to fire on any change; returns unsubscribe(). Multiple
+        listeners allowed, unlike assigning model.changed."""
+        return self.model.subscribe(fn)
+
+
 class GpuEngine:
     """Toolkit-neutral grid engine: owns model/geometry/controller, the surface, and
     all rendering, overlays (editor/dropdown/filter/find), scrollbar and input logic.
@@ -447,6 +475,7 @@ class GpuEngine:
         self._scroll_pos = None         # [x, y] float px the animation eases from
         self._scroll_to = None          # [x, y] float px target
         self._scroll_last = None        # (scroll_x, scroll_y) last written (detect external scroll)
+        self._scroll_t = 0.0            # perf_counter of last wheel-scroll ease tick (real-dt)
         # track-click paging: hold on the track, view glides toward the pointer
         # (Excel-style), stops when the thumb reaches it. See _start_sbpage.
         self._sbpage_after = None       # repeat timer handle, or None when idle
@@ -459,7 +488,7 @@ class GpuEngine:
         self._zoom_t = 0.0              # perf_counter of last zoom-ease tick (real-dt)
         self._zoomfps = os.environ.get("FASTPYGRID_ZOOMFPS") == "1"   # print real glide fps
         self._zoom_frames = []          # (ts, build_ms, upload_ms) for the current glide (fps probe)
-        model.changed = lambda: self._coalesce(self.redraw)
+        model.subscribe(lambda: self._coalesce(self.redraw))   # first listener; hosts add more
 
     # --- surface lifecycle (lazy: device created on first Configure, after the
     # window maps, so make_sheet() stays instant) ---
@@ -470,11 +499,11 @@ class GpuEngine:
         if w < 2 or h < 2:
             return
         self._surf = self._lib.gpu_attach(self.host.hwnd(), w, h) or None
-        # WM_PAINT is a no-op (we rely on the last gpu_render present persisting via
-        # DWM). On first show there's no prior present, so the first render can race
-        # the window becoming visible and leave it white. Force one more once settled.
+        # The GL child is created hidden; gpu_render reveals it on the first present. Render
+        # that frame synchronously here so the window's first visible pixels are the grid,
+        # never a white flash. (WM_PAINT is a no-op; we rely on the present persisting via DWM.)
         if self._surf is not None:
-            self.host.after_idle(self.redraw)
+            self.redraw()
 
     def redraw(self):
         # Drag fires mouse-move faster than paint+blit+upload completes, and the zoom
@@ -622,9 +651,27 @@ class GpuEngine:
     # --- find bar (top-right, no Tk widget). Keys route to the query field:
     # Enter=next, Shift+Enter=prev, Esc/click-off closes. Match highlights:
     # FindController -> model find-state -> paint(). ---
+    # --- public convenience API (surfaced on the host widget via GridFacade) ---
+    def reset_view(self):
+        """Zoom to 1.0 and scroll back to the top-left origin."""
+        self.ctl.zoom_to(1.0)
+        self.geom.scroll_x = self.geom.scroll_y = 0
+        self.geom.clamp(self.model.nrows())
+        self.redraw()
+
+    def select(self, r, c):
+        """Select grid cell (r, c) (clamped) and scroll it into view."""
+        self.ctl.select(r, c)
+
+    def scroll_to(self, r, c):
+        """Scroll grid cell (r, c) into view without changing the selection."""
+        self.ctl.scroll_into_view(r, c)
+
     def reveal_find(self):
         if self._find is None:
-            tf = TextField(self._measure, "", clipboard=(self.host.clip_get, self.host.clip_set))
+            # base_measure (÷ zoom) so the caret matches the zoom-independent bar text
+            base_measure = lambda t, b=False: round(self.host.measure(t, b) * self._base_fpx / max(1, self._fpx))
+            tf = TextField(base_measure, "", clipboard=(self.host.clip_get, self.host.clip_set))
             f = self._find = {"tf": tf, "ctl": FindController(self.ctl), "count": "",
                               "case": False, "scope": False, "avail": False, "layout": None}
             f["ctl"].on_count = self._find_count
@@ -641,7 +688,10 @@ class GpuEngine:
 
     def _draw_find(self, cv):
         f, g, s = self._find, self.geom, self._scale
-        h = g.row_h + round(8 * s)
+        # Size + text pinned to DPI scale s, not grid zoom, so the bar stays constant
+        # while row_h/_fpx grow with Ctrl+wheel zoom (mirrors the filter popup).
+        saved_fpx, cv.fpx = cv.fpx, max(9, round(13 * s))
+        h = round(30 * s)
         pad, bw, cw, fw = round(6 * s), round(26 * s), round(64 * s), round(150 * s)
         w = pad + fw + pad + cw + 5 * bw + pad
         x, y = g.w - w - round(6 * s), round(4 * s)
@@ -660,6 +710,7 @@ class GpuEngine:
             btns[key] = (bx, y, bw, h)
             bx += bw
         f["layout"] = {"field": (fx, fy, fw, fh), "btns": btns, "bar": (x, y, w, h)}
+        cv.fpx = saved_fpx                                   # restore for later overlays
 
     def _find_key(self, keysym, char, shift, ctrl):
         f = self._find
@@ -1601,13 +1652,18 @@ class GpuEngine:
     # fling or lag.
     _WHEEL_ROWS = 2.0        # vertical rows per notch (px/notch = _WHEEL_ROWS * row_h,
                              # DPI/zoom-independent)
-    _HWHEEL_ROWS = 6.0       # horizontal notch in row_h units: columns are far wider than
-                             # row_h, so matching the vertical step felt sluggish. 6*22≈one col.
-    _SCROLL_EASE = 0.30      # fraction of the remaining gap consumed each frame
-    _SCROLL_MS = 11          # animation timer period (~90 Hz)
+    _HWHEEL_ROWS = 4.0       # horizontal notch in row_h units: columns are far wider than
+                             # row_h, so matching the vertical step felt sluggish. 4*22≈one col.
+    _SCROLL_EASE = 0.30      # per-frame ease fraction (scrollbar trough-glide, _sbpage_tick)
+    _SCROLL_MS = 11          # scrollbar trough-glide timer period (~90 Hz)
     _SCROLL_SNAP = 1.0       # px: within this of target -> land exactly and stop
-    _SCROLL_MAX_FRAC = 0.22  # per-frame move cap, fraction of viewport (caps top speed)
+    _SCROLL_MAX_FRAC = 0.22  # per-frame move cap, fraction of viewport (scrollbar trough-glide)
     _SCROLL_LEAD_FRAC = 1.1  # target may lead the live position by at most this * viewport
+    # Wheel-scroll glide: real-dt ease (like zoom), so feel is cadence-independent and the
+    # timer can run tight (vsync/refresh-bound) instead of capping fps at ~90 Hz.
+    _SMOOTH_MS = 1           # wheel glide timer period: tight, render cadence-bound not timer-gated
+    _SMOOTH_TAU = 0.05       # ease time constant (s): ~95% of the gap closed in ~3*TAU (~150 ms)
+    _SMOOTH_MAX_VEL = 20.0   # top-speed cap: viewport-fractions/sec (dt-scaled, frame-rate-independent)
 
     def hwheel(self, notches):     # shift-wheel / trackpad-x
         self._scroll_smooth(dx=-notches * self._HWHEEL_ROWS * self.geom.row_h)
@@ -1636,7 +1692,8 @@ class GpuEngine:
         t[0] = min(max(t[0], g.scroll_x - lead_x), g.scroll_x + lead_x)
         t[1] = min(max(t[1], g.scroll_y - lead_y), g.scroll_y + lead_y)
         if self._scroll_after is None:
-            self._scroll_after = self.host.after(self._SCROLL_MS, self._scroll_anim_tick)
+            self._scroll_t = time.perf_counter()    # glide clock start (real-dt ease)
+            self._scroll_after = self.host.after(self._SMOOTH_MS, self._scroll_anim_tick)
 
     def _scroll_anim_tick(self):
         self._scroll_after = None
@@ -1645,6 +1702,9 @@ class GpuEngine:
         g = self.geom
         if self._scroll_last is not None and (g.scroll_x, g.scroll_y) != self._scroll_last:
             self._scroll_to = None; return          # external scroll took over -> yield
+        now = time.perf_counter()
+        dt, self._scroll_t = now - self._scroll_t, now
+        frac = 1.0 - math.exp(-dt / self._SMOOTH_TAU)   # real-dt ease: same feel at any cadence
         view_w = max(1, g.w - g.freeze_x())
         view_h = max(1, g.h - g.header_h)
         pos, tgt = self._scroll_pos, self._scroll_to
@@ -1653,13 +1713,13 @@ class GpuEngine:
             gap = target - cur
             if abs(gap) <= self._SCROLL_SNAP:
                 return target, True
-            step = gap * self._SCROLL_EASE
+            step = gap * frac
             # scroll_x/y render as ints; a sub-pixel step rounds to the same pixel for
             # several frames then jumps 1px = visible judder in the ease tail. Floor the
             # step to a whole pixel so every frame advances exactly 1px near the target.
             if abs(step) < 1.0:
                 step = 1.0 if gap > 0 else -1.0
-            cap = self._SCROLL_MAX_FRAC * view
+            cap = self._SMOOTH_MAX_VEL * view * dt  # velocity cap (per-sec, dt-scaled): far spins don't lurch
             return cur + max(-cap, min(cap, step)), False
 
         pos[0], dx_done = ease(pos[0], tgt[0], view_w)
@@ -1672,7 +1732,7 @@ class GpuEngine:
         if dx_done and dy_done:
             self._scroll_to = self._scroll_pos = None
             return
-        self._scroll_after = self.host.after(self._SCROLL_MS, self._scroll_anim_tick)
+        self._scroll_after = self.host.after(self._SMOOTH_MS, self._scroll_anim_tick)
 
     # --- scrollbars: drawn in the reserved right/bottom strips, thumb brightens to
     # accent on hover/drag. ---

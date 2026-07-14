@@ -68,6 +68,15 @@ class GridController:
         self.geom.clamp(self.model.nrows())
         self.host.after_scroll_change()
 
+    def select(self, r, c):
+        """Set the single-cell selection to grid cell (r, c), clamped to the sheet,
+        and scroll it into view. Mirrors where an arrow key lands."""
+        r = max(0, min(self.model.nrows() - 1, r))
+        c = max(0, min(self.model.ncols - 1, c))
+        self.active = self.anchor = (r, c)
+        self.sel, self.extra = (r, c, r, c), []
+        self.scroll_into_view(r, c)
+
     # --- mouse ------------------------------------------------------------
     def on_press(self, x, y, ctrl, shift):
         self.host.commit_editor()

@@ -72,8 +72,34 @@ def _clean(cell):
 class GridModel:
     def __init__(self, headers, rows, editable=True):
         self.editable = editable
-        self.changed = lambda: None     # view assigns its redraw here
+        self._subs = []                  # changed()-listeners; the view's redraw is one of them
+        self.on_edit = lambda: None      # fires ONLY on data mutations (set_cell/paste/
+        #   delete/undo/redo), unlike changed() which also fires on style/filter/scroll.
+        #   Consumer assigns this for autosave/dirty-tracking. Zero-arg on purpose.
         self.set_data(headers, rows)
+
+    # --- change notification ------------------------------------------
+    def subscribe(self, fn):
+        """Register fn() to fire on every changed() — any redraw-triggering change
+        (edit/style/filter/sort/scroll). Returns an unsubscribe(). Any number of
+        listeners may attach; the view's redraw is just the first subscriber (so a
+        host can observe changes without stealing the slot from the engine)."""
+        self._subs.append(fn)
+        return lambda: fn in self._subs and self._subs.remove(fn)
+
+    def changed(self):
+        for fn in self._subs:
+            fn()
+
+    def export(self):
+        """(headers, rows) in SOURCE order, ignoring the active sort/filter — the
+        stable read-back for autosave/export. Round-trips: set_data(*m.export()).
+        `headers` matches the set_data shape: a flat list for a single header row,
+        else a list of header rows."""
+        w = self._w
+        headers = list(self._headers[0]) if self._hdr == 1 else [list(h) for h in self._headers]
+        rows = [[r[c] for c in range(w)] for r in self._rows]
+        return headers, rows
 
     # --- data load ----------------------------------------------------
     def set_data(self, headers, rows):

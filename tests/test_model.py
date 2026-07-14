@@ -3,6 +3,45 @@ from fastpygrid.core.model import GridModel
 from fastpygrid.core.coremodel import make_model
 
 
+def test_on_edit_fires_only_on_data():
+    """on_edit is the data-mutation sink (autosave hook), distinct from changed()
+    which also fires on style/filter/find. Grid row 1 = data row 0 (one header row)."""
+    m = make_model(["A", "B"], [["x", "p"], ["y", "q"], ["z", "r"]])
+    edits = []
+    m.on_edit = lambda: edits.append(1)
+
+    # data mutations -> fire
+    m.set_cell(1, 0, "X"); assert len(edits) == 1
+    m.paste_text("a\tb", [(1, 0, 1, 1)], (1, 0)); assert len(edits) == 2
+    m.delete_selection([(1, 0, 1, 0)]); assert len(edits) == 3
+    m.undo(); assert len(edits) == 4          # undo of a cell edit IS a data change
+    m.redo(); assert len(edits) == 5
+
+    # no-op / non-data -> do NOT fire
+    n = len(edits)
+    m.set_cell(1, 0, m.cell(1, 0))            # same value, engine reports unchanged
+    m.set_cell_style(1, 0, bold=True)         # style
+    m.set_filter(0, {"x", "y"})               # view
+    m.find_matches("x")                       # find
+    assert len(edits) == n
+
+
+def test_export_roundtrip_and_subscribe():
+    """export() is source-ordered + round-trips; subscribe() is multi-listener."""
+    m = make_model(["A", "B"], [["x", "p"], ["y", "q"], ["z", "r"]])
+    m.set_sort(0, ascending=False)                 # view is now z,y,x...
+    headers, rows = m.export()                     # ...export ignores the sort
+    assert headers == ["A", "B"]
+    assert rows == [["x", "p"], ["y", "q"], ["z", "r"]]
+    m.set_data(*m.export()); assert m.export()[1] == rows   # round-trips
+
+    hits = [0, 0]
+    off0 = m.subscribe(lambda: hits.__setitem__(0, hits[0] + 1))
+    m.subscribe(lambda: hits.__setitem__(1, hits[1] + 1))
+    m.changed(); assert hits == [1, 1]             # both listeners fire
+    off0(); m.changed(); assert hits == [1, 2]     # unsubscribed one stops
+
+
 def test_core_cell_styles():
     """CoreModel styles live in the C++ core (gc_set_style/gc_get_style/...)."""
     m = make_model(["A", "B"], [["x", "p"], ["y", "q"], ["z", "r"]])

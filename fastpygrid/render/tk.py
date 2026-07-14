@@ -12,7 +12,7 @@ from tkinter import font as tkfont
 
 from ..core import theme as T
 from ..core.coremodel import make_model
-from ..core.gpu import GpuEngine, _load_lib, _enable_dpi_awareness, _screen_scale, UI_FONT
+from ..core.gpu import GpuEngine, GridFacade, _load_lib, _enable_dpi_awareness, _screen_scale, UI_FONT
 
 
 def _win_clip_html():
@@ -49,7 +49,7 @@ def _win_clip_html():
         return ""
 
 
-class GpuGrid(tk.Frame):
+class GpuGrid(GridFacade, tk.Frame):
     """Thin Tk host: owns the surface frame + fonts, implements the host-adapter API,
     translates Tk events into the engine's normalized input."""
 

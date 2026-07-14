@@ -103,6 +103,7 @@ struct Ctx {
     Atlas atlas;                         // shared glyph atlas (all fonts/sizes share it)
     GLuint bound_tex = 0;                // currently-bound texture, to skip redundant binds
     bool anim = false;                   // mid zoom-glide: raster at a snapped size + GPU-scale (see raster_size)
+    bool shown = false;                  // window stays hidden until the first frame is presented (no white flash)
 #ifdef _WIN32
     HWND hwnd = nullptr;
     HDC  hdc  = nullptr;
@@ -163,7 +164,9 @@ static void ensure_class() {
 }
 static bool plat_make_context(Ctx& c, HWND parent, int w, int h, bool visible) {
     ensure_class();
-    DWORD style = visible ? (WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS) : (WS_POPUP);
+    // Child is created hidden; gpu_render shows it once a real frame is presented, so the
+    // window's first visible pixels are never blank. (offscreen probe stays a hidden popup.)
+    DWORD style = visible ? (WS_CHILD | WS_CLIPSIBLINGS) : (WS_POPUP);
     c.hwnd = CreateWindowExW(0, WCLASS, L"", style, 0, 0, w, h,
                              visible ? parent : nullptr, nullptr,
                              GetModuleHandleW(nullptr), nullptr);
@@ -195,6 +198,7 @@ static void plat_make_current(Ctx& c) {
         wglMakeCurrent(c.hdc, c.glrc);
 }
 static void plat_swap(Ctx& c)         { SwapBuffers(c.hdc); }
+static void plat_show(Ctx& c)         { ShowWindow(c.hwnd, SW_SHOWNA); }  // show without stealing focus from Tk/Qt
 static void plat_destroy(Ctx& c) {
     wglMakeCurrent(nullptr, nullptr);
     if (c.memdc) DeleteDC(c.memdc);
@@ -304,7 +308,7 @@ static bool plat_make_context(Ctx& c, Window parent, int w, int h, bool visible)
     c.win = XCreateWindow(c.dpy, root, 0, 0, w, h, 0, vi->depth, InputOutput,
                           vi->visual, CWColormap | CWEventMask, &swa);
     c.owns_win = true;
-    if (visible) XMapWindow(c.dpy, c.win);
+    // Left unmapped; gpu_render maps it on the first present so it never shows blank.
     c.glrc = glXCreateContext(c.dpy, vi, nullptr, True);
     XFree(vi);
     if (!c.glrc) return false;
@@ -317,6 +321,7 @@ static void plat_make_current(Ctx& c) {
         glXMakeCurrent(c.dpy, c.win, c.glrc);
 }
 static void plat_swap(Ctx& c)         { glXSwapBuffers(c.dpy, c.win); }
+static void plat_show(Ctx& c)         { XMapWindow(c.dpy, c.win); }
 static void plat_destroy(Ctx& c) {
     for (auto& kv : c.fonts) if (kv.second.face) FT_Done_Face(kv.second.face);
     if (c.glrc) { glXMakeCurrent(c.dpy, None, nullptr); glXDestroyContext(c.dpy, c.glrc); }
@@ -742,6 +747,7 @@ EXPORT void gpu_render(void* sp, const uint8_t* ops, int n, int clear_rgb, int a
     precache_text(*c, ops, (size_t)n);          // raster all glyphs before batching
     draw_ops(*c, ops, (size_t)n);
     plat_swap(*c);
+    if (!c->shown) { c->shown = true; plat_show(*c); }   // reveal only after the first real frame presents
 }
 
 EXPORT void gpu_resize(void* sp, int w, int h) {

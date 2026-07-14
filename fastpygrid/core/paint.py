@@ -132,10 +132,10 @@ def _body_cells(model, C, cells, frozen, drops, frozen_drops, overlays):
                 zeb = (gr - H) % 2 == 0                       # first data row = zebra
                 if st == 2:
                     bg = T.FIND_ACTIVE
+                elif st == 1:                                 # match yellow shows through selection
+                    bg = T.FIND_MATCH
                 elif washed(gr, c):                           # selection tint over fill
                     bg = _blend(base, T.SEL_TINT, SEL_WASH_A) if base else (C.wash_odd if zeb else C.wash_even)
-                elif st == 1:
-                    bg = T.FIND_MATCH
                 else:
                     bg = base if base else (T.ZEBRA if zeb else T.BG)
                 dst.append((x, y, cw, g.row_h, body_txt[(gr - H, c)], bg, fg, flags))
@@ -211,7 +211,12 @@ def _chrome(model, C, active, hover_corner, frozen, chrome, overlays):
                 sty = cell_style(hr, c)
                 fg = sty.get("fg", T.FIELD_FG) if sty else T.FIELD_FG
                 base = sty.get("bg") if sty else None
-                if washed(hr, c):
+                st = model.find_state(hr, c)
+                if st == 2:
+                    bg = T.FIND_ACTIVE
+                elif st == 1:
+                    bg = T.FIND_MATCH
+                elif washed(hr, c):
                     bg = _blend(base, T.SEL_TINT, SEL_WASH_A) if base else C.wash_hdr
                 else:
                     bg = base if base else T.FIELD_BG

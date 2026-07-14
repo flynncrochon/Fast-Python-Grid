@@ -475,7 +475,7 @@ EXPORT const char* gc_distinct_colors(void* h, int col, int which, int* out_n) {
 // loop moved off Python. Styles come from c->styles (keyed source_row,col); the selection
 // wash over a styled bg is blended here (sel_tint/sel_wash_a). Find highlight is native
 // too (needle already lowered by the caller when !cs) -- match state per cell mirrors
-// GridModel.find_state / paint._body_cells precedence: active > selection wash > match.
+// GridModel.find_state / paint._body_cells precedence: active > match > selection wash.
 // Layout mirrors GpuCanvas.rect(x,y,w-1,h-1,fill=bg) + text(x,y,w,h,txt,fg,bold).
 //   cols/colx/colw : ncol visible columns (col index, x, width)
 //   grs/rowy       : nrow visible data rows (grid index, y)
@@ -534,9 +534,9 @@ EXPORT const char* gc_paint_body(void* h,
             }
             int bg;
             if (fstate == 2)      bg = find_active;
+            else if (fstate == 1) bg = find_match;
             else if (washed)      bg = (base >= 0 ? blend_col(base, sel_tint, sel_wash_a)
                                                   : (zeb ? wash_odd : wash_even));
-            else if (fstate == 1) bg = find_match;
             else                  bg = (base >= 0 ? base : (zeb ? col_zebra : col_bg));
             o.push_back('R'); put_f32(o, x); put_f32(o, y); put_f32(o, w - 1); put_f32(o, row_h - 1);
             put_i32(o, bg); put_i32(o, -1); put_f32(o, rect_w);

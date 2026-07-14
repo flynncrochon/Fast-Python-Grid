@@ -5,22 +5,14 @@ Same shape as tk.py: the thin Qt adapter owns the window, a native surface widge
 context menu, and implements the host-adapter methods the engine calls. All chrome
 is Gpu-drawn, so the widget IS the surface: no sibling Qt widgets.
 """
-import os
-
-# Engine works in PHYSICAL pixels (Gpu RT forced to 96 DPI), so Qt must not scale --
-# else it reports logical px and renders into a 1/dpr corner with mouse coords off.
-# AA_DisableHighDpiScaling is a no-op in Qt6; these env vars are the real switch and
-# must be set before QApplication.
-# assumes dpr==1. Embedding in a QApplication that forces scaling => coords
-# offset. Set QT_ENABLE_HIGHDPI_SCALING=0 in that app's env too.
-os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
-os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
-
+# The engine works in PHYSICAL pixels; Qt events/sizes are LOGICAL. This host
+# converts at the boundary via devicePixelRatioF(), so it's correct whether or not
+# the host QApplication has HighDPI scaling on -- no global env hacks needed.
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..core import theme as T
 from ..core.coremodel import make_model
-from ..core.gpu import GpuEngine, _load_lib, _enable_dpi_awareness, _screen_scale, UI_FONT
+from ..core.gpu import GpuEngine, GridFacade, _load_lib, _screen_scale, UI_FONT
 
 # Qt key -> Tk-style keysym the engine checks (grid nav + TextField overlays).
 _KEYS = {
@@ -46,7 +38,7 @@ def _keysym(e):
     return t if t else ""
 
 
-class GpuQtGrid(QtWidgets.QWidget):
+class GpuQtGrid(GridFacade, QtWidgets.QWidget):
     """Thin Qt host. Native self-painted surface: the Gpu child HWND parents to
     winId() and does all drawing; Qt just forwards events."""
 
@@ -62,8 +54,9 @@ class GpuQtGrid(QtWidgets.QWidget):
         self.setMouseTracking(True)                 # deliver hover moves (no button held)
 
         self._fpx = max(9, round(13 * scale))
-        self.font = QtGui.QFont(UI_FONT); self.font.setPixelSize(self._fpx)
-        self.hfont = QtGui.QFont(UI_FONT); self.hfont.setPixelSize(self._fpx)
+        lp = max(1, round(self._fpx / (self.devicePixelRatioF() or 1.0)))  # logical px -> _fpx physical
+        self.font = QtGui.QFont(UI_FONT); self.font.setPixelSize(lp)
+        self.hfont = QtGui.QFont(UI_FONT); self.hfont.setPixelSize(lp)
         self.hfont.setBold(True)
         self._fm = {False: QtGui.QFontMetrics(self.font), True: QtGui.QFontMetrics(self.hfont)}
 
@@ -81,25 +74,33 @@ class GpuQtGrid(QtWidgets.QWidget):
         m = e.modifiers()
         return bool(m & QtCore.Qt.ControlModifier), bool(m & QtCore.Qt.ShiftModifier)
 
+    def _dpr(self):
+        return self.devicePixelRatioF() or 1.0
+
+    def _px(self, p):
+        """Logical widget position -> physical px the engine works in."""
+        d = self._dpr()
+        return int(p.x() * d), int(p.y() * d)
+
     def _root(self, e):
-        g = e.globalPosition().toPoint()
+        g = e.globalPosition().toPoint()             # logical global, for QMenu.exec
         return (g.x(), g.y())
 
     def mousePressEvent(self, e):
-        p = e.position()
+        x, y = self._px(e.position())
         if e.button() == QtCore.Qt.RightButton:
-            self.engine.context(int(p.x()), int(p.y()), self._root(e)); return
+            self.engine.context(x, y, self._root(e)); return
         if e.button() != QtCore.Qt.LeftButton:
             return
         ctrl, shift = self._mods(e)
-        self.engine.press(int(p.x()), int(p.y()), ctrl, shift)
+        self.engine.press(x, y, ctrl, shift)
 
     def mouseMoveEvent(self, e):
-        p = e.position()
+        x, y = self._px(e.position())
         if e.buttons() & QtCore.Qt.LeftButton:
-            self.engine.drag(int(p.x()), int(p.y()))
+            self.engine.drag(x, y)
         else:
-            self.engine.motion(int(p.x()), int(p.y()))
+            self.engine.motion(x, y)
 
     def mouseReleaseEvent(self, e):
         if e.button() == QtCore.Qt.LeftButton:
@@ -107,8 +108,7 @@ class GpuQtGrid(QtWidgets.QWidget):
 
     def mouseDoubleClickEvent(self, e):
         if e.button() == QtCore.Qt.LeftButton:
-            p = e.position()
-            self.engine.double(int(p.x()), int(p.y()))
+            self.engine.double(*self._px(e.position()))
 
     def leaveEvent(self, e):
         self.engine.leave()
@@ -143,19 +143,19 @@ class GpuQtGrid(QtWidgets.QWidget):
         return False                                # let Tab reach keyPressEvent
 
     def resizeEvent(self, e):
-        s = e.size()
-        self.engine.configure_size(s.width(), s.height())
+        self.engine.configure_size(*self.size())     # physical
 
     def showEvent(self, e):
         super().showEvent(e)
-        self.engine.configure_size(self.width(), self.height())
+        self.engine.configure_size(*self.size())     # physical
 
     # --- host-adapter API the engine calls (mirrors render.tk.GpuGrid) ---
     def measure(self, text, bold=False):
-        return self._fm[bool(bold)].horizontalAdvance(text)
+        return round(self._fm[bool(bold)].horizontalAdvance(text) * self._dpr())
 
     def size(self):
-        return self.width(), self.height()
+        d = self._dpr()
+        return round(self.width() * d), round(self.height() * d)
 
     def hwnd(self):
         return int(self.winId())
@@ -170,7 +170,8 @@ class GpuQtGrid(QtWidgets.QWidget):
         self.setCursor(c)
 
     def set_zoom_px(self, px):
-        self.font.setPixelSize(px); self.hfont.setPixelSize(px)
+        lp = max(1, round(px / self._dpr()))         # px is physical; QFont wants logical
+        self.font.setPixelSize(lp); self.hfont.setPixelSize(lp)
         self._fm = {False: QtGui.QFontMetrics(self.font), True: QtGui.QFontMetrics(self.hfont)}
 
     def clip_get(self):
@@ -231,13 +232,13 @@ def make_sheet(headers, rows, frozen_columns=0, view_only=False, master=None,
             "OpenGL surface unavailable, build it with `python -m fastpygrid.core.gpu --build`.")
     app = QtWidgets.QApplication.instance()
     if app is None:
-        _enable_dpi_awareness()          # process DPI-aware, Qt scaling off via env (top of file)
-        app = QtWidgets.QApplication([])
+        app = QtWidgets.QApplication([])  # QApplication makes the process DPI-aware itself
     scale = _screen_scale(None)
     model = make_model(headers, rows, editable=not view_only)
     win = QtWidgets.QWidget(master)
     win.setWindowTitle(title)
-    win.resize(round(980 * scale), round(620 * scale))
+    dpr = win.devicePixelRatioF() or 1.0  # resize() is logical; Qt already applies dpr when scaling
+    win.resize(round(980 * scale / dpr), round(620 * scale / dpr))
     grid = GpuQtGrid(win, model, editable=not view_only, frozen=frozen_columns,
                      col_w=col_w, scale=scale, lib=lib,
                      uncap_rows=uncap_rows, uncap_cols=uncap_cols, filters=filters)

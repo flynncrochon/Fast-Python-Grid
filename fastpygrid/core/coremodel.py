@@ -429,6 +429,7 @@ class CoreModel(GridModel):
             if not self._is_plain():
                 self._rebuild()
             self.changed()
+            self.on_edit()
         return bool(changed)
 
     def paste_text(self, text, ranges, active):
@@ -467,6 +468,8 @@ class CoreModel(GridModel):
         if not self._is_plain():
             self._rebuild()
         self.changed()
+        if changed:
+            self.on_edit()
         end_gr = start_gr + nblock - 1
         end_col = start_col + maxw - 1
         return (start_gr, start_col, min(end_gr, self.nrows() - 1), min(end_col, self._w - 1))
@@ -492,6 +495,7 @@ class CoreModel(GridModel):
         if self._rebuilds_on_edit(gr, col):
             self._rebuild()
         self.changed()
+        self.on_edit()
         return True
 
     def grow_cols(self, new_w):
@@ -516,6 +520,7 @@ class CoreModel(GridModel):
             return None
         self._install_filt(entry[1])
         self.changed()
+        self.on_edit()                    # undo/redo of a cell edit IS a data change
         return self._clamp_target(entry[2])
 
     # ---- find -> C++ (data) + Python (header rows) ----
@@ -556,6 +561,8 @@ class CoreModel(GridModel):
                 if r2 < H:
                     continue
                 flat.extend((max(0, r1 - H), c1, r2 - H, c2))
+            if not flat:                       # header-only scope: no data rows to search
+                return sorted(set(out)), False
             sc, nsc = _iarr(flat)
         else:
             nsc = 0
