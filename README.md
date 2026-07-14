@@ -122,12 +122,14 @@ Reach the model through `win.model`.
 | `ncols` | `int` | Column count (a property, no parens). |
 | `set_cell(gr, col, text)` | `bool` | Write a cell. Goes through undo. Returns `False` if unchanged or read-only. |
 | `set_data(headers, rows)` | `None` | Swap in a new sheet, resetting filters, sort and undo. |
+| `export()` | `(headers, rows)` | The whole sheet in **source order**, ignoring the active sort/filter. Round-trips: `m.set_data(*m.export())`. |
 
 ```python
 m = win.model
 m.cell(1, 0)                 # 'AAPL'
 m.set_cell(1, 3, "191.55")   # bump Apple's price, returns True
 m.ncols                      # 4
+headers, rows = m.export()   # stable read-back for autosave, e.g. json.dump
 ```
 
 ### Styling and dropdowns
@@ -164,20 +166,71 @@ m.set_hline(0, width=4)     # rule under the header; width in px (omit for the 2
 m.set_readonly_col(0)       # Ticker can't be edited
 ```
 
+### Reacting to changes
+
+On the model (`win.model`).
+
+| Call | What it does |
+|---|---|
+| `subscribe(fn)` | Register `fn()` to fire on **any** redraw-triggering change (edit, style, filter, sort, scroll). Returns an `unsubscribe()`. Any number of listeners; the grid's own redraw is just the first one. |
+| `on_edit = fn` | A single callback fired **only** on data mutations (`set_cell`, paste, delete, undo, redo) — not styling/filter/scroll. The hook for autosave / dirty-tracking. |
+
+```python
+m.on_edit = lambda: save(m.export())         # persist only when data actually changes
+off = m.subscribe(lambda: print("view changed"))
+off()                                         # stop listening
+```
+
+### Driving the view
+
+On the grid widget (`win.grid_view`), so hosts don't reach into internals.
+
+| Call | What it does |
+|---|---|
+| `select(gr, col)` | Move the selection to one cell and scroll it into view. |
+| `scroll_to(gr, col)` | Scroll a cell into view **without** changing the selection. |
+| `open_find()` | Open the find bar (same as Ctrl+F). |
+| `reset_view()` | Zoom back to 1.0 and scroll to the top-left. |
+| `subscribe(fn)` | Same as `model.subscribe`, surfaced on the widget. |
+
+```python
+g = win.grid_view
+g.select(1, 3)      # jump to Apple's price
+g.open_find()
+g.reset_view()
+```
+
 ## Build
 
+Compiles the native libs (`gridcore`, `glsurface`) and packages a wheel into `dist/`.
+
+**Windows** — needs Python + Visual Studio (MSVC, C++17):
+
+```bat
+build-windows.bat
+```
+
+**Linux** — needs g++, Python 3, and dev headers:
+
 ```bash
+sudo apt install build-essential libgl1-mesa-dev libx11-dev libfreetype-dev python3-pip
+./build.sh
+```
+
+**Both wheels** (from Windows, needs WSL `Ubuntu-22.04`):
+
+```bat
 build-all.bat
 ```
 
-Builds **both** platform wheels into `dist/`: the Windows `win_amd64` wheel and
-the Linux `linux_x86_64` wheel (via WSL). Each wheel carries only its own
-platform's binary. Needs CMake, MSVC, Python's `build`, and WSL (`Ubuntu-22.04`)
-for the Linux wheel. Re-run after any `.cpp`/`.py` change.
+The scripts drive **CMake** (`CMakeLists.txt`) for the compile — it finds MSVC / g++
+itself. To build just the DLLs (no wheel), same on either OS:
 
-Per-platform sub-scripts: `build-windows.bat` (Windows wheel only) and
-`build-linux.bat` (Linux wheel only). Each also compiles its `.dll`/`.so` into
-`fastpygrid/core/` so in-place bench/fuzz scripts stay fresh.
+```bash
+cmake -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native --config Release
+cmake --install build/native --config Release --prefix .   # -> fastpygrid/core/
+```
 
 ## Run demo
 
