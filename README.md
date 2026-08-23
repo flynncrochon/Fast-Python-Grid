@@ -11,7 +11,7 @@
 
 ---
 
-An OpenGL spreadsheet grid for tens of thousands of rows. GUI core under a thin Tk or Qt host.
+An OpenGL spreadsheet grid for tens of thousands of rows. GUI core under a thin Tk or Qt host
 
 ![fastpygrid sample grid: a multi-cell selection with a column filter popup open](docs/screenshot.png)
 
